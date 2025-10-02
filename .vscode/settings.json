@@ -1,0 +1,11 @@
+{
+  "editor.defaultFormatter": "denoland.vscode-deno",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+
+  "deno.enable": true,
+  "deno.lint": true,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false
+}
