@@ -1,15 +1,19 @@
 {
+  "workspace": [
+    "./packages/tinyassist-deno"
+  ],
   "nodeModulesDir": "auto",
   "tasks": {
-    "init": "lefthook install",
-    "dev": "deno run --watch src/main.ts",
-    "start": "deno run src/main.ts"
+    "setup": "deno install --allow-scripts && deno task setup:lefthook",
+    "setup:lefthook": "lefthook install",
+    "fmt": "deno fmt && cargo fmt",
+    "lint": "deno lint && cargo clippy"
   },
   "imports": {
-    "@std/assert": "jsr:@std/assert@1",
     "lefthook": "npm:lefthook@^1.13.6"
   },
   "fmt": {
-    "lineWidth": 120
+    "lineWidth": 120,
+    "proseWrap": "preserve"
   }
 }

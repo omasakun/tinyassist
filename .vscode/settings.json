@@ -4,6 +4,9 @@
   "editor.codeActionsOnSave": {
     "source.organizeImports": "explicit"
   },
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
 
   "deno.enable": true,
   "deno.lint": true,
