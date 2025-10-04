@@ -1,3 +1,5 @@
+pub mod context;
+
 use anyhow::Result;
 use arboard::Clipboard;
 use colored::*;

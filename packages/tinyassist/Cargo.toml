@@ -9,6 +9,7 @@ arboard = "3.0"
 clap = { version = "4.0", features = ["derive"] }
 colored = "3.0"
 crossterm = "0.29"
+directories = "6.0"
 dotenvy = "0.15"
 genai = "0.4"
 tokio = { version = "1.0", features = ["full"] }
