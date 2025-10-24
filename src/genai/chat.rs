@@ -15,6 +15,10 @@ impl ChatMessage {
   pub fn user(content: impl Into<String>) -> Self {
     Self { role: ChatRole::User, content: content.into() }
   }
+
+  pub fn assistant(content: impl Into<String>) -> Self {
+    Self { role: ChatRole::Assistant, content: content.into() }
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Display)]
@@ -22,6 +26,7 @@ impl ChatMessage {
 pub enum ChatRole {
   System,
   User,
+  Assistant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

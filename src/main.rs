@@ -13,7 +13,7 @@ use argh::FromArgs;
 use colored::Colorize;
 use directories::ProjectDirs;
 use indoc::indoc;
-use terminal::{UserAction, copy_to_clipboard, execute_command, prompt};
+use terminal::{ChatAction, UserAction, copy_to_clipboard, execute_command, prompt};
 
 use crate::context::ShellContext;
 use crate::error::{AppError, Result};
@@ -57,6 +57,10 @@ pub struct Args {
   #[argh(switch, short = 'f')]
   pub fix: bool,
 
+  /// free form conversation
+  #[argh(switch)]
+  pub chat: bool,
+
   /// show config info
   #[argh(switch)]
   pub info: bool,
@@ -88,7 +92,7 @@ fn main() -> ExitCode {
   match main_inner() {
     Ok(code) => code,
     Err(e) => {
-      eprintln!("{}: {}", "Error".red(), e);
+      eprintln!("{} {}", "Error:".red(), e);
       ExitCode::from(1)
     }
   }
@@ -123,13 +127,92 @@ fn main_inner() -> Result<ExitCode> {
     return Ok(ExitCode::SUCCESS);
   }
 
-  let exit_code = if args.fix {
+  let exit_code = if args.chat {
+    let initial_prompt = if args.prompt.is_empty() { None } else { Some(args.prompt()) };
+    handle_chat_mode(&args.model, initial_prompt)?
+  } else if args.fix {
     handle_fix_mode(&args.model, &args.prompt())?
   } else {
-    handle_normal_mode(&args.model, &args.prompt())?
+    let prompt_text = if args.prompt.is_empty() { prompt("Prompt: ")? } else { args.prompt() };
+    handle_normal_mode(&args.model, &prompt_text)?
   };
 
   Ok(ExitCode::from(exit_code as u8))
+}
+
+/// Handle chat mode: free form conversation with LLM
+fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<i32> {
+  let client = Client::new();
+  let mut messages: Vec<ChatMessage> = Vec::new();
+
+  const CHAT_SYSTEM_PROMPT: &str =
+    "You are a helpful AI assistant. Provide concise and accurate responses.";
+
+  messages.push(ChatMessage::system(CHAT_SYSTEM_PROMPT));
+
+  let mut initial_input = initial_prompt;
+
+  loop {
+    let user_input = if let Some(input) = initial_input.take() { input } else { prompt("You: ")? };
+
+    if user_input.trim().is_empty() {
+      continue;
+    }
+
+    messages.push(ChatMessage::user(&user_input));
+
+    let chat_req = ChatRequest::new(messages.clone());
+    let chat_res = client.exec_chat(model, chat_req)?;
+
+    let response_text = chat_res
+      .first_text()
+      .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?
+      .to_string();
+
+    println!("{} {}", "AI:".green(), response_text);
+
+    messages.push(ChatMessage::assistant(&response_text));
+
+    loop {
+      let action = ChatAction::ask()?;
+
+      match action {
+        ChatAction::Copy => {
+          copy_to_clipboard(&response_text)?;
+          println!("{}", "Copied to clipboard".green());
+          break;
+        }
+        ChatAction::Revert => {
+          messages.pop();
+          messages.pop();
+          if messages.len() > 1 {
+            println!("{}", "Reverted. You can enter a different prompt".yellow());
+            let corrected_input = prompt("You: ")?;
+
+            if !corrected_input.trim().is_empty() {
+              messages.push(ChatMessage::user(&corrected_input));
+
+              let chat_req = ChatRequest::new(messages.clone());
+              let chat_res = client.exec_chat(model, chat_req)?;
+
+              let new_response_text = chat_res
+                .first_text()
+                .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?
+                .to_string();
+
+              println!("{} {}", "AI:".green(), new_response_text);
+
+              messages.pop();
+              messages.push(ChatMessage::assistant(&new_response_text));
+            }
+          }
+          continue;
+        }
+        ChatAction::Next => break,
+        ChatAction::Abort => return Ok(0),
+      }
+    }
+  }
 }
 
 /// Handle --fix mode: fix the last command
@@ -147,14 +230,11 @@ fn handle_fix_mode(model: &str, prompt: &str) -> Result<i32> {
   let contextual_prompt = if prompt.is_empty() {
     context.format_for_llm(true)
   } else {
-    format!(
-      "{}\n\nFix instructions: {}",
-      context.format_for_llm(true),
-      prompt
-    )
+    format!("{}\n\nFix instructions: {}", context.format_for_llm(true), prompt)
   };
 
-  let messages = vec![ChatMessage::system(FIX_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
+  let messages =
+    vec![ChatMessage::system(FIX_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
 
   let chat_req = ChatRequest::new(messages.clone());
   let chat_res = client.exec_chat(model, chat_req)?;
@@ -164,7 +244,9 @@ fn handle_fix_mode(model: &str, prompt: &str) -> Result<i32> {
     .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
 
   let command = response_text.trim().to_string();
-  command_interaction_loop(command, messages, model)
+  let mut messages_with_response = messages;
+  messages_with_response.push(ChatMessage::assistant(&command));
+  command_interaction_loop(command, messages_with_response, model)
 }
 
 /// Handle normal mode: generate command from prompt
@@ -197,7 +279,11 @@ fn generate_command(
     .first_text()
     .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
 
-  Ok((response_text.trim().to_string(), messages))
+  let command = response_text.trim().to_string();
+  let mut messages_with_response = messages;
+  messages_with_response.push(ChatMessage::assistant(&command));
+
+  Ok((command, messages_with_response))
 }
 
 fn explain_command(model: &str, command: &str) -> Result<String> {
@@ -237,7 +323,10 @@ fn refine_command(
     .first_text()
     .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
 
-  Ok((response_text.trim().to_string(), messages))
+  let command = response_text.trim().to_string();
+  messages.push(ChatMessage::assistant(&command));
+
+  Ok((command, messages))
 }
 
 /// Load .env file if it exists
@@ -396,6 +485,7 @@ fn run_user_action(
   match action {
     UserAction::Copy => {
       copy_to_clipboard(command)?;
+      println!("{}", "Copied to clipboard".green());
       Ok((0, None))
     }
     UserAction::Run => {
