@@ -1,4 +1,4 @@
-cargo-features = ["profile-rustflags"]
+cargo-features = ["panic-immediate-abort", "profile-rustflags"]
 
 [package]
 name = "tinyassist"
@@ -7,30 +7,22 @@ edition = "2024"
 
 [profile.release]
 codegen-units = 1
-debug = "line-tables-only"
-lto = "fat"
+lto = true
 opt-level = "s"
-panic = "abort"
-rustflags = ["-Z", "location-detail=none"]
-split-debuginfo = "packed"
-# strip = "symbols"
+panic = "immediate-abort"
+rustflags = ["-Zlocation-detail=none", "-Zfmt-debug=none"]
+strip = true
 
 [dependencies]
-anyhow = "1"
 arboard = { version = "3", default-features = false }
-clap = { version = "4", features = ["derive"] }
+argh = "0.1"
 colored = "3"
-crossterm = "0.29"
+console = "0.16"
 directories = "6"
 dotenvy = "0.15"
-reqwest = { version = "0.12", features = ["json"] }
+minreq = { version = "2", features = ["https-native"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 strum = "0.27"
 strum_macros = "0.27"
 thiserror = "2"
-tokio = { version = "1", features = ["full"] }
-
-# compile-time filtering
-log = { version = "0.4", features = ["release_max_level_off"] }
-tracing = { version = "0.1", features = ["release_max_level_off"] }

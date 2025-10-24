@@ -1,7 +1,6 @@
-use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Display, EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum Adapter {
   OpenAI,

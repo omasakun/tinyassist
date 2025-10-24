@@ -4,12 +4,12 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::Result;
 use arboard::Clipboard;
 use colored::Colorize;
-use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use console::{Key, Term};
 use strum_macros::{EnumIter, EnumString};
+
+use crate::error::Result;
 
 #[derive(Debug, Clone, Copy, EnumString, EnumIter)]
 #[strum(serialize_all = "lowercase")]
@@ -27,27 +27,24 @@ pub enum UserAction {
 }
 
 impl UserAction {
-  pub async fn ask() -> Result<Self> {
+  pub fn ask() -> Result<Self> {
     loop {
       print!("{}", "[c] Copy  [r] Run  [e] Explain  [f] Refine  [a] Abort > ".blue());
       io::stdout().flush()?;
 
-      enable_raw_mode()?;
-
-      let key = loop {
-        if let Event::Key(key_event) = event::read()? {
-          match key_event.code {
-            KeyCode::Char(c) => break c.to_ascii_lowercase(),
-            KeyCode::Esc => break 'a',
-            _ => continue,
-          }
+      let key = Term::stderr().read_key()?;
+      let c = match key {
+        Key::Char(ch) => ch.to_ascii_lowercase(),
+        Key::Escape => 'a',
+        _ => {
+          println!();
+          continue;
         }
       };
 
-      disable_raw_mode()?;
       println!();
 
-      if let Ok(action) = UserAction::from_str(&key.to_string()) {
+      if let Ok(action) = UserAction::from_str(&c.to_string()) {
         return Ok(action);
       } else {
         println!("{}", "Invalid choice. Please try again.".yellow());
@@ -63,7 +60,7 @@ pub fn error(message: &str) {
 }
 
 // Input and execution utilities
-pub async fn copy_to_clipboard(text: &str) -> Result<()> {
+pub fn copy_to_clipboard(text: &str) -> Result<()> {
   let mut clipboard = Clipboard::new()?;
   clipboard.set_text(text)?;
 
@@ -73,13 +70,13 @@ pub async fn copy_to_clipboard(text: &str) -> Result<()> {
   Ok(())
 }
 
-pub async fn execute_command(command: &str) -> Result<i32> {
+pub fn execute_command(command: &str) -> Result<i32> {
   let status = Command::new("sh").arg("-c").arg(command).status()?;
 
   Ok(status.code().unwrap_or(1))
 }
 
-pub async fn prompt(prompt: &str) -> Result<String> {
+pub fn prompt(prompt: &str) -> Result<String> {
   print!("{}", prompt.blue());
   io::stdout().flush()?;
 

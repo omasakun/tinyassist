@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use reqwest::Client as ReqwestClient;
 use serde_json::json;
 
 use crate::genai::adapter::Adapter;
@@ -10,33 +7,27 @@ use crate::genai::{Error, Result};
 /// High-level LLM client supporting multiple providers.
 ///
 /// Automatically detects the appropriate adapter based on the model name
-pub struct Client {
-  inner: Arc<ClientInner>,
-}
-
-struct ClientInner {
-  http_client: ReqwestClient,
-}
+pub struct Client;
 
 impl Client {
   pub fn new() -> Self {
-    Self { inner: Arc::new(ClientInner { http_client: ReqwestClient::new() }) }
+    Self
   }
 
-  pub async fn exec_chat(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
+  pub fn exec_chat(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
     let adapter_kind = Adapter::from_model_name(model);
 
     match adapter_kind {
-      Adapter::OpenAI => self.call_openai(model, chat_req).await,
-      Adapter::Anthropic => self.call_anthropic(model, chat_req).await,
-      Adapter::Gemini => self.call_gemini(model, chat_req).await,
-      Adapter::Groq => self.call_groq(model, chat_req).await,
-      Adapter::DeepSeek => self.call_deepseek(model, chat_req).await,
+      Adapter::OpenAI => self.call_openai(model, chat_req),
+      Adapter::Anthropic => self.call_anthropic(model, chat_req),
+      Adapter::Gemini => self.call_gemini(model, chat_req),
+      Adapter::Groq => self.call_groq(model, chat_req),
+      Adapter::DeepSeek => self.call_deepseek(model, chat_req),
       Adapter::Others => Err(Error::InvalidModel(model.to_string())),
     }
   }
 
-  async fn call_openai(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
+  fn call_openai(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
     let api_key =
       std::env::var("OPENAI_API_KEY").map_err(|_| Error::NoApiKey("OpenAI".to_string()))?;
 
@@ -56,27 +47,26 @@ impl Client {
       "messages": messages,
     });
 
-    let response = self
-      .inner
-      .http_client
-      .post("https://api.openai.com/v1/chat/completions")
-      .header("Authorization", format!("Bearer {}", api_key))
-      .json(&payload)
+    let response = minreq::post("https://api.openai.com/v1/chat/completions")
+      .with_header("Authorization", format!("Bearer {}", api_key))
+      .with_header("Content-Type", "application/json")
+      .with_body(payload.to_string())
       .send()
-      .await
       .map_err(|e| Error::RequestFailed(e.to_string()))?;
 
-    let json: serde_json::Value = response.json().await.map_err(|e| Error::Parse(e.to_string()))?;
+    let body = response.as_str().map_err(|e| Error::RequestFailed(e.to_string()))?;
+    let json: serde_json::Value =
+      serde_json::from_str(body).map_err(|e| Error::Parse(e.to_string()))?;
 
     let content = json["choices"][0]["message"]["content"]
       .as_str()
       .ok_or_else(|| Error::Parse("Invalid OpenAI response structure".to_string()))?
       .to_string();
 
-    Ok(ChatResponse { content, model: model.to_string() })
+    Ok(ChatResponse { content })
   }
 
-  async fn call_anthropic(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
+  fn call_anthropic(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
     let api_key =
       std::env::var("ANTHROPIC_API_KEY").map_err(|_| Error::NoApiKey("Anthropic".to_string()))?;
 
@@ -108,28 +98,27 @@ impl Client {
       payload["system"] = json!(system);
     }
 
-    let response = self
-      .inner
-      .http_client
-      .post("https://api.anthropic.com/v1/messages")
-      .header("x-api-key", api_key)
-      .header("anthropic-version", "2023-06-01")
-      .json(&payload)
+    let response = minreq::post("https://api.anthropic.com/v1/messages")
+      .with_header("x-api-key", &api_key)
+      .with_header("anthropic-version", "2023-06-01")
+      .with_header("Content-Type", "application/json")
+      .with_body(payload.to_string())
       .send()
-      .await
       .map_err(|e| Error::RequestFailed(e.to_string()))?;
 
-    let json: serde_json::Value = response.json().await.map_err(|e| Error::Parse(e.to_string()))?;
+    let body = response.as_str().map_err(|e| Error::RequestFailed(e.to_string()))?;
+    let json: serde_json::Value =
+      serde_json::from_str(body).map_err(|e| Error::Parse(e.to_string()))?;
 
     let content = json["content"][0]["text"]
       .as_str()
       .ok_or_else(|| Error::Parse("Invalid Anthropic response structure".to_string()))?
       .to_string();
 
-    Ok(ChatResponse { content, model: model.to_string() })
+    Ok(ChatResponse { content })
   }
 
-  async fn call_gemini(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
+  fn call_gemini(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
     let api_key =
       std::env::var("GEMINI_API_KEY").map_err(|_| Error::NoApiKey("Gemini".to_string()))?;
 
@@ -148,29 +137,30 @@ impl Client {
       "contents": contents,
     });
 
-    let response = self
-      .inner
-      .http_client
-      .post(format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
-      ))
-      .json(&payload)
+    let url = format!(
+      "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+      model, api_key
+    );
+
+    let response = minreq::post(&url)
+      .with_header("Content-Type", "application/json")
+      .with_body(payload.to_string())
       .send()
-      .await
       .map_err(|e| Error::RequestFailed(e.to_string()))?;
 
-    let json: serde_json::Value = response.json().await.map_err(|e| Error::Parse(e.to_string()))?;
+    let body = response.as_str().map_err(|e| Error::RequestFailed(e.to_string()))?;
+    let json: serde_json::Value =
+      serde_json::from_str(body).map_err(|e| Error::Parse(e.to_string()))?;
 
     let content = json["candidates"][0]["content"]["parts"][0]["text"]
       .as_str()
       .ok_or_else(|| Error::Parse("Invalid Gemini response structure".to_string()))?
       .to_string();
 
-    Ok(ChatResponse { content, model: model.to_string() })
+    Ok(ChatResponse { content })
   }
 
-  async fn call_groq(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
+  fn call_groq(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
     let api_key = std::env::var("GROQ_API_KEY").map_err(|_| Error::NoApiKey("Groq".to_string()))?;
 
     let messages = chat_req
@@ -189,27 +179,26 @@ impl Client {
       "messages": messages,
     });
 
-    let response = self
-      .inner
-      .http_client
-      .post("https://api.groq.com/openai/v1/chat/completions")
-      .header("Authorization", format!("Bearer {}", api_key))
-      .json(&payload)
+    let response = minreq::post("https://api.groq.com/openai/v1/chat/completions")
+      .with_header("Authorization", format!("Bearer {}", api_key))
+      .with_header("Content-Type", "application/json")
+      .with_body(payload.to_string())
       .send()
-      .await
       .map_err(|e| Error::RequestFailed(e.to_string()))?;
 
-    let json: serde_json::Value = response.json().await.map_err(|e| Error::Parse(e.to_string()))?;
+    let body = response.as_str().map_err(|e| Error::RequestFailed(e.to_string()))?;
+    let json: serde_json::Value =
+      serde_json::from_str(body).map_err(|e| Error::Parse(e.to_string()))?;
 
     let content = json["choices"][0]["message"]["content"]
       .as_str()
       .ok_or_else(|| Error::Parse("Invalid Groq response structure".to_string()))?
       .to_string();
 
-    Ok(ChatResponse { content, model: model.to_string() })
+    Ok(ChatResponse { content })
   }
 
-  async fn call_deepseek(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
+  fn call_deepseek(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
     let api_key =
       std::env::var("DEEPSEEK_API_KEY").map_err(|_| Error::NoApiKey("DeepSeek".to_string()))?;
 
@@ -229,23 +218,22 @@ impl Client {
       "messages": messages,
     });
 
-    let response = self
-      .inner
-      .http_client
-      .post("https://api.deepseek.com/chat/completions")
-      .header("Authorization", format!("Bearer {}", api_key))
-      .json(&payload)
+    let response = minreq::post("https://api.deepseek.com/chat/completions")
+      .with_header("Authorization", format!("Bearer {}", api_key))
+      .with_header("Content-Type", "application/json")
+      .with_body(payload.to_string())
       .send()
-      .await
       .map_err(|e| Error::RequestFailed(e.to_string()))?;
 
-    let json: serde_json::Value = response.json().await.map_err(|e| Error::Parse(e.to_string()))?;
+    let body = response.as_str().map_err(|e| Error::RequestFailed(e.to_string()))?;
+    let json: serde_json::Value =
+      serde_json::from_str(body).map_err(|e| Error::Parse(e.to_string()))?;
 
     let content = json["choices"][0]["message"]["content"]
       .as_str()
       .ok_or_else(|| Error::Parse("Invalid DeepSeek response structure".to_string()))?
       .to_string();
 
-    Ok(ChatResponse { content, model: model.to_string() })
+    Ok(ChatResponse { content })
   }
 }

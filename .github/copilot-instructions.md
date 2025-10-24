@@ -45,9 +45,10 @@ Especially if a method isn't found, it may be behind an optional feature
 
 ## Error Handling
 
-- Use `anyhow` for error handling
-- Use `.with_context(|| format!("..."))` instead of `.map_err()`
-- Don't pass error context as function parameters when `.with_context()` can capture it
+- Use `thiserror` with the `Error` enum defined in `src/error.rs` or `src/module_name/error.rs`
+- Return descriptive error messages using the `Error` enum variants
+- Use the `?` operator for error propagation
+- For contextual errors, use `Error::Context(format!("..."))` variant
 
 ## Code Organization & Refactoring
 

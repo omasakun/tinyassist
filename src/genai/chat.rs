@@ -38,7 +38,6 @@ impl ChatRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
   pub content: String,
-  pub model: String,
 }
 
 impl ChatResponse {

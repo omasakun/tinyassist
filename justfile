@@ -10,6 +10,7 @@ _default:
 # Format, check, lint, and test
 check:
   cargo fmt
+  cargo update -Z unstable-options --breaking
   cargo check --quiet
   cargo clippy --quiet
   cargo test --quiet --tests
@@ -22,6 +23,9 @@ build *args:
 build-timing:
   cargo clean --profile dev
   cargo build --timings
+
+install:
+  cargo install --path .
 
 # Run in debug mode
 [no-cd]

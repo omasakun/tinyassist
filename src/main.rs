@@ -1,17 +1,20 @@
+#![allow(clippy::type_complexity)]
+
 mod context;
+mod error;
 mod genai;
 mod terminal;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result};
-use clap::Parser;
+use argh::FromArgs;
 use colored::Colorize;
 use directories::ProjectDirs;
 use terminal::{UserAction, copy_to_clipboard, error, execute_command, prompt};
 
 use crate::context::ShellContext;
+use crate::error::{AppError, Result};
 use crate::genai::{ChatMessage, ChatRequest, Client};
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -40,28 +43,27 @@ const EXPLAIN_SYSTEM_PROMPT: &str =
   "You are a helpful AI that explains shell commands very concisely. Keep it under 50 words.";
 
 /// CLI Arguments
-#[derive(Parser, Debug)]
-#[command(name = "tinyassist")]
-#[command(about = "Generate shell commands from natural language descriptions")]
-#[command(version = "0.1.0")]
+#[derive(FromArgs)]
+/// Generate shell commands from natural language descriptions
 pub struct Args {
-  /// Model to use
-  #[arg(long, default_value = DEFAULT_MODEL)]
+  /// model to use
+  #[argh(option, default = "DEFAULT_MODEL.to_string()")]
   pub model: String,
 
-  /// Fix the last command
-  #[arg(long)]
+  /// fix the last command
+  #[argh(switch)]
   pub fix: bool,
 
-  /// Show config info
-  #[arg(long)]
+  /// show config info
+  #[argh(switch)]
   pub info: bool,
 
-  /// Generate shell integration script
-  #[arg(long)]
+  /// generate shell integration script
+  #[argh(switch)]
   pub init: bool,
 
-  /// Natural language description of the command you want
+  /// natural language description of the command you want
+  #[argh(positional)]
   pub prompt: Vec<String>,
 }
 
@@ -75,11 +77,10 @@ impl Args {
   }
 }
 
-#[tokio::main]
-async fn main() -> Result<ExitCode> {
+fn main() -> Result<ExitCode> {
   load_env();
 
-  let args = Args::parse();
+  let args: Args = argh::from_env();
 
   // Handle --init flag
   if args.init {
@@ -104,38 +105,38 @@ async fn main() -> Result<ExitCode> {
   }
 
   let exit_code = if args.fix {
-    handle_fix_mode(&args.model).await?
+    handle_fix_mode(&args.model)?
   } else {
-    handle_normal_mode(&args.model, &args.prompt()).await?
+    handle_normal_mode(&args.model, &args.prompt())?
   };
 
   Ok(ExitCode::from(exit_code as u8))
 }
 
 /// Handle --fix mode: fix the last command
-async fn handle_fix_mode(model: &str) -> Result<i32> {
-  let context = ShellContext::current().context("Failed to get terminal context")?;
+fn handle_fix_mode(model: &str) -> Result<i32> {
+  let context = ShellContext::current()?;
 
   println!("{}", format!("Last command: {}", context.last_command).yellow());
 
-  let (command, messages) = fix_last_command(model, &context).await?;
-  command_interaction_loop(command, messages, model).await
+  let (command, messages) = fix_last_command(model, &context)?;
+  command_interaction_loop(command, messages, model)
 }
 
 /// Handle normal mode: generate command from prompt
-async fn handle_normal_mode(model: &str, prompt: &str) -> Result<i32> {
+fn handle_normal_mode(model: &str, prompt: &str) -> Result<i32> {
   if prompt.trim().is_empty() {
     error("Please provide a prompt");
     return Ok(1);
   }
 
-  let context = ShellContext::current().context("Failed to get terminal context")?;
+  let context = ShellContext::current()?;
 
-  let (command, messages) = generate_command(model, prompt, &context).await?;
-  command_interaction_loop(command, messages, model).await
+  let (command, messages) = generate_command(model, prompt, &context)?;
+  command_interaction_loop(command, messages, model)
 }
 
-async fn fix_last_command(
+fn fix_last_command(
   model: &str,
   context: &context::ShellContext,
 ) -> Result<(String, Vec<ChatMessage>)> {
@@ -148,15 +149,16 @@ async fn fix_last_command(
 
   let chat_req = ChatRequest::new(messages.clone());
 
-  let chat_res =
-    client.exec_chat(model, chat_req).await.context("Failed to execute fix command request")?;
+  let chat_res = client.exec_chat(model, chat_req)?;
 
-  let response_text = chat_res.first_text().context("No response text from AI")?;
+  let response_text = chat_res
+    .first_text()
+    .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
 
   Ok((response_text.trim().to_string(), messages))
 }
 
-async fn generate_command(
+fn generate_command(
   model: &str,
   user_prompt: &str,
   context: &context::ShellContext,
@@ -172,15 +174,16 @@ async fn generate_command(
     vec![ChatMessage::system(GENERATE_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
   let chat_req = ChatRequest::new(messages.clone());
 
-  let chat_res =
-    client.exec_chat(model, chat_req).await.context("Failed to execute chat request")?;
+  let chat_res = client.exec_chat(model, chat_req)?;
 
-  let response_text = chat_res.first_text().context("No response text from AI")?;
+  let response_text = chat_res
+    .first_text()
+    .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
 
   Ok((response_text.trim().to_string(), messages))
 }
 
-async fn explain_command(model: &str, command: &str) -> Result<String> {
+fn explain_command(model: &str, command: &str) -> Result<String> {
   let client = Client::new();
 
   let explain_prompt =
@@ -191,15 +194,16 @@ async fn explain_command(model: &str, command: &str) -> Result<String> {
     ChatMessage::user(&explain_prompt),
   ]);
 
-  let chat_res =
-    client.exec_chat(model, chat_req).await.context("Failed to execute explain request")?;
+  let chat_res = client.exec_chat(model, chat_req)?;
 
-  let response_text = chat_res.first_text().context("No explanation text from AI")?;
+  let response_text = chat_res
+    .first_text()
+    .ok_or_else(|| AppError::Context("No explanation text from AI".to_string()))?;
 
   Ok(response_text.trim().to_string())
 }
 
-async fn refine_command(
+fn refine_command(
   model: &str,
   mut messages: Vec<ChatMessage>,
   refinement: &str,
@@ -210,10 +214,11 @@ async fn refine_command(
 
   let chat_req = ChatRequest::new(messages.clone());
 
-  let chat_res =
-    client.exec_chat(model, chat_req).await.context("Failed to execute refine request")?;
+  let chat_res = client.exec_chat(model, chat_req)?;
 
-  let response_text = chat_res.first_text().context("No refined command from AI")?;
+  let response_text = chat_res
+    .first_text()
+    .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
 
   Ok((response_text.trim().to_string(), messages))
 }
@@ -280,11 +285,11 @@ fn print_shell_integration(alias_name: &str) -> Result<()> {
     print_bash_integration(alias_name);
     Ok(())
   } else {
-    anyhow::bail!("Unsupported shell: {}. Supported shells: bash", shell);
+    Err(AppError::Context(format!("Unsupported shell: {}. Supported shells: bash", shell)))
   }
 }
 
-async fn run_user_action(
+fn run_user_action(
   action: UserAction,
   command: &str,
   messages: &[ChatMessage],
@@ -292,26 +297,26 @@ async fn run_user_action(
 ) -> Result<(i32, Option<(String, Vec<ChatMessage>)>)> {
   match action {
     UserAction::Copy => {
-      copy_to_clipboard(command).await?;
+      copy_to_clipboard(command)?;
       Ok((0, None))
     }
     UserAction::Run => {
-      let exit_code = execute_command(command).await?;
+      let exit_code = execute_command(command)?;
       Ok((exit_code, None))
     }
     UserAction::Explain => {
-      let explanation = explain_command(model, command).await?;
+      let explanation = explain_command(model, command)?;
       println!("\n{}", "Explanation:".green());
       println!("{}\n", explanation);
       Ok((0, None))
     }
     UserAction::Refine => {
-      let refinement = prompt("Instructions: ").await?;
+      let refinement = prompt("Instructions: ")?;
       if refinement.trim().is_empty() {
         println!("{}", "No refinement provided.".yellow());
         Ok((0, None))
       } else {
-        let refined_result = refine_command(model, messages.to_vec(), &refinement).await?;
+        let refined_result = refine_command(model, messages.to_vec(), &refinement)?;
         Ok((0, Some(refined_result)))
       }
     }
@@ -320,7 +325,7 @@ async fn run_user_action(
 }
 
 /// Interactive command loop that handles user actions
-async fn command_interaction_loop(
+fn command_interaction_loop(
   initial_command: String,
   initial_messages: Vec<ChatMessage>,
   model: &str,
@@ -331,9 +336,9 @@ async fn command_interaction_loop(
   loop {
     print_response(&current_command);
 
-    let action = UserAction::ask().await?;
+    let action = UserAction::ask()?;
     let (exit_code, new_result) =
-      run_user_action(action, &current_command, &current_messages, model).await?;
+      run_user_action(action, &current_command, &current_messages, model)?;
 
     match action {
       UserAction::Copy | UserAction::Run => {

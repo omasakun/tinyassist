@@ -1,7 +1,7 @@
 use std::env;
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
+use crate::error::Result;
 
 #[derive(Debug, Clone)]
 pub struct ShellContext {
@@ -13,8 +13,7 @@ pub struct ShellContext {
 
 impl ShellContext {
   pub fn current() -> Result<Self> {
-    let working_directory =
-      env::current_dir().context("Failed to get current directory")?.to_string_lossy().to_string();
+    let working_directory = env::current_dir()?.to_string_lossy().to_string();
 
     Ok(ShellContext {
       last_command: Self::last_command(),
