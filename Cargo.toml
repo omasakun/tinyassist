@@ -9,7 +9,7 @@ edition = "2024"
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "immediate-abort"
+panic = "abort"
 rustflags = ["-Zlocation-detail=none", "-Zfmt-debug=none"]
 strip = true
 

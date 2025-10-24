@@ -12,7 +12,7 @@ use strum_macros::{EnumIter, EnumString};
 use crate::error::Result;
 use crate::platform::Shell;
 
-#[derive(Debug, Clone, Copy, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 pub enum UserAction {
   #[strum(serialize = "c")]
@@ -53,7 +53,7 @@ impl UserAction {
   }
 }
 
-#[derive(Debug, Clone, Copy, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 pub enum ChatAction {
   #[strum(serialize = "c")]

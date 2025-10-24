@@ -1,9 +1,13 @@
 #![allow(clippy::type_complexity)]
 
+mod chat_handler;
+mod command_ops;
 mod context;
 mod error;
 mod genai;
+mod integrations;
 mod platform;
+mod prompts;
 mod terminal;
 
 use std::path::PathBuf;
@@ -12,38 +16,13 @@ use std::process::ExitCode;
 use argh::FromArgs;
 use colored::Colorize;
 use directories::ProjectDirs;
-use indoc::indoc;
 use terminal::{ChatAction, UserAction, copy_to_clipboard, execute_command, prompt};
 
 use crate::context::ShellContext;
 use crate::error::{AppError, Result};
 use crate::genai::{ChatMessage, ChatRequest, Client};
-use crate::platform::Shell;
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
-
-const GENERATE_SYSTEM_PROMPT: &str = indoc! {"
-  You are an AI designed to help users identify the precise shell command they need.
-  Always provide a concise shell command.
-
-  Important:
-  - Think hard about the command you are going to provide, and make sure it is the best one.
-  - No shebang, no explanations, no extra text. Just the command.
-"};
-
-const FIX_SYSTEM_PROMPT: &str = indoc! {"
-  You are a helpful AI that fixes failed shell commands.
-  Analyze the provided command and suggest a corrected version.
-
-  Important:
-  - Only provide the corrected command, no explanations, no shebang, no extra text.
-  - Fix common issues like: missing sudo, typos, wrong flags, missing files/directories
-  - Keep the original intent of the command
-  - If the command seems correct, suggest checking prerequisites or dependencies
-"};
-
-const EXPLAIN_SYSTEM_PROMPT: &str =
-  "You are a helpful AI that explains shell commands very concisely. Keep it under 50 words.";
 
 /// Generate shell commands from natural language descriptions
 #[derive(FromArgs)]
@@ -106,7 +85,7 @@ fn main_inner() -> Result<ExitCode> {
   // Handle --init option
   if let Some(shell_name) = &args.init {
     let alias_name = args.alias.as_deref().unwrap_or("ta");
-    print_shell_integration(shell_name, alias_name)?;
+    integrations::print_shell_integration(shell_name, alias_name)?;
     return Ok(ExitCode::SUCCESS);
   }
 
@@ -145,10 +124,7 @@ fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<i32> 
   let client = Client::new();
   let mut messages: Vec<ChatMessage> = Vec::new();
 
-  const CHAT_SYSTEM_PROMPT: &str =
-    "You are a helpful AI assistant. Provide concise and accurate responses.";
-
-  messages.push(ChatMessage::system(CHAT_SYSTEM_PROMPT));
+  messages.push(ChatMessage::system(prompts::Prompts::CHAT));
 
   let mut initial_input = initial_prompt;
 
@@ -161,55 +137,19 @@ fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<i32> 
 
     messages.push(ChatMessage::user(&user_input));
 
-    let chat_req = ChatRequest::new(messages.clone());
-    let chat_res = client.exec_chat(model, chat_req)?;
-
-    let response_text = chat_res
-      .first_text()
-      .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?
-      .to_string();
-
-    println!("{} {}", "AI:".green(), response_text);
-
-    messages.push(ChatMessage::assistant(&response_text));
+    let response_text = chat_handler::handle_chat_response(model, &client, &mut messages)?;
 
     loop {
       let action = ChatAction::ask()?;
 
-      match action {
-        ChatAction::Copy => {
-          copy_to_clipboard(&response_text)?;
-          println!("{}", "Copied to clipboard".green());
-          break;
-        }
-        ChatAction::Revert => {
-          messages.pop();
-          messages.pop();
-          if messages.len() > 1 {
-            println!("{}", "Reverted. You can enter a different prompt".yellow());
-            let corrected_input = prompt("You: ")?;
+      if action == ChatAction::Abort {
+        return Ok(0);
+      }
 
-            if !corrected_input.trim().is_empty() {
-              messages.push(ChatMessage::user(&corrected_input));
-
-              let chat_req = ChatRequest::new(messages.clone());
-              let chat_res = client.exec_chat(model, chat_req)?;
-
-              let new_response_text = chat_res
-                .first_text()
-                .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?
-                .to_string();
-
-              println!("{} {}", "AI:".green(), new_response_text);
-
-              messages.pop();
-              messages.push(ChatMessage::assistant(&new_response_text));
-            }
-          }
-          continue;
-        }
-        ChatAction::Next => break,
-        ChatAction::Abort => return Ok(0),
+      let should_continue =
+        chat_handler::process_chat_action(action, &response_text, &mut messages, model, &client)?;
+      if should_continue {
+        break;
       }
     }
   }
@@ -234,7 +174,7 @@ fn handle_fix_mode(model: &str, prompt: &str) -> Result<i32> {
   };
 
   let messages =
-    vec![ChatMessage::system(FIX_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
+    vec![ChatMessage::system(prompts::Prompts::FIX), ChatMessage::user(&contextual_prompt)];
 
   let chat_req = ChatRequest::new(messages.clone());
   let chat_res = client.exec_chat(model, chat_req)?;
@@ -257,76 +197,9 @@ fn handle_normal_mode(model: &str, prompt: &str) -> Result<i32> {
 
   let context = ShellContext::current()?;
 
-  let (command, messages) = generate_command(model, prompt, &context)?;
+  let (command, messages) =
+    command_ops::generate_command(model, prompt, &context.format_for_llm(false))?;
   command_interaction_loop(command, messages, model)
-}
-
-fn generate_command(
-  model: &str,
-  user_prompt: &str,
-  context: &context::ShellContext,
-) -> Result<(String, Vec<ChatMessage>)> {
-  let client = Client::new();
-
-  let contextual_prompt = format!("{}\n\n{}", user_prompt, context.format_for_llm(false));
-  let messages =
-    vec![ChatMessage::system(GENERATE_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
-  let chat_req = ChatRequest::new(messages.clone());
-
-  let chat_res = client.exec_chat(model, chat_req)?;
-
-  let response_text = chat_res
-    .first_text()
-    .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
-
-  let command = response_text.trim().to_string();
-  let mut messages_with_response = messages;
-  messages_with_response.push(ChatMessage::assistant(&command));
-
-  Ok((command, messages_with_response))
-}
-
-fn explain_command(model: &str, command: &str) -> Result<String> {
-  let client = Client::new();
-
-  let explain_prompt =
-    format!("Explain this shell command in 1-2 simple sentences:\n\n{}", command);
-
-  let chat_req = ChatRequest::new(vec![
-    ChatMessage::system(EXPLAIN_SYSTEM_PROMPT),
-    ChatMessage::user(&explain_prompt),
-  ]);
-
-  let chat_res = client.exec_chat(model, chat_req)?;
-
-  let response_text = chat_res
-    .first_text()
-    .ok_or_else(|| AppError::Context("No explanation text from AI".to_string()))?;
-
-  Ok(response_text.trim().to_string())
-}
-
-fn refine_command(
-  model: &str,
-  mut messages: Vec<ChatMessage>,
-  refinement: &str,
-) -> Result<(String, Vec<ChatMessage>)> {
-  let client = Client::new();
-
-  messages.push(ChatMessage::user(refinement));
-
-  let chat_req = ChatRequest::new(messages.clone());
-
-  let chat_res = client.exec_chat(model, chat_req)?;
-
-  let response_text = chat_res
-    .first_text()
-    .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
-
-  let command = response_text.trim().to_string();
-  messages.push(ChatMessage::assistant(&command));
-
-  Ok((command, messages))
 }
 
 /// Load .env file if it exists
@@ -349,133 +222,6 @@ fn print_response(command: &str) {
   println!("{} {}", ">".blue(), command);
 }
 
-fn print_bash_integration(alias_name: &str) {
-  println!(
-    "{}",
-    indoc! {"
-      # tinyassist shell integration for bash
-      # Add this to your ~/.bashrc or ~/.bash_profile:
-      # eval \"$(tinyassist --init bash)\"
-
-      function {alias}() {
-          export TA_EXIT_CODE=$?
-          export TA_SHELL=bash
-          export TA_LAST_COMMAND=$(fc -ln -1 2>/dev/null)
-
-          tinyassist \"$@\"
-
-          unset TA_SHELL
-          unset TA_EXIT_CODE
-          unset TA_LAST_COMMAND
-      }
-    "}
-    .replace("{alias}", alias_name)
-  );
-}
-
-fn print_zsh_integration(alias_name: &str) {
-  println!(
-    "{}",
-    indoc! {"
-      # tinyassist shell integration for zsh
-      # Add this to your ~/.zshrc:
-      # eval \"$(tinyassist --init zsh)\"
-
-      function {alias}() {
-          export TA_EXIT_CODE=$?
-          export TA_SHELL=zsh
-          export TA_LAST_COMMAND=$(fc -ln -1 2>/dev/null)
-
-          tinyassist \"$@\"
-
-          unset TA_SHELL
-          unset TA_EXIT_CODE
-          unset TA_LAST_COMMAND
-      }
-    "}
-    .replace("{alias}", alias_name)
-  );
-}
-
-fn print_fish_integration(alias_name: &str) {
-  println!(
-    "{}",
-    indoc! {"
-      # tinyassist shell integration for fish
-      # Add this to your ~/.config/fish/config.fish:
-      # tinyassist --init fish | source
-
-      function {alias}
-          set -x TA_EXIT_CODE $status
-          set -x TA_SHELL fish
-          set -x TA_LAST_COMMAND (builtin history -1)
-
-          tinyassist $argv
-
-          set -e TA_SHELL
-          set -e TA_EXIT_CODE
-          set -e TA_LAST_COMMAND
-      end
-    "}
-    .replace("{alias}", alias_name)
-  );
-}
-
-fn print_powershell_integration(alias_name: &str) {
-  println!(
-    "{}",
-    indoc! {"
-      # tinyassist shell integration for PowerShell
-      # Add this to your $PROFILE:
-      # Invoke-Expression (& tinyassist --init pwsh | Out-String)
-
-      function {alias} {
-          $env:TA_EXIT_CODE = if ($?) { 0 } else { $LASTEXITCODE }
-          $env:TA_SHELL = \"pwsh\"
-          $env:TA_LAST_COMMAND = @(Get-History -Count 1).CommandLine
-
-          & tinyassist @args
-
-          Remove-Item Env:TA_SHELL -ErrorAction SilentlyContinue
-          Remove-Item Env:TA_EXIT_CODE -ErrorAction SilentlyContinue
-          Remove-Item Env:TA_LAST_COMMAND -ErrorAction SilentlyContinue
-      }
-    "}
-    .replace("{alias}", alias_name)
-  );
-}
-
-/// Print shell integration script for the specified shell
-fn print_shell_integration(shell_name: &str, alias_name: &str) -> Result<()> {
-  let shell = Shell::from_name(shell_name);
-
-  match shell {
-    Shell::Bash => {
-      print_bash_integration(alias_name);
-      Ok(())
-    }
-    Shell::Zsh => {
-      print_zsh_integration(alias_name);
-      Ok(())
-    }
-    Shell::Fish => {
-      print_fish_integration(alias_name);
-      Ok(())
-    }
-    Shell::PowerShell => {
-      print_powershell_integration(alias_name);
-      Ok(())
-    }
-    Shell::Cmd => {
-      Err(AppError::Context("Shell integration not yet supported for cmd.exe".to_string()))
-    }
-    Shell::Unknown(name) => Err(AppError::Context(format!(
-      "Unsupported shell: {}. Supported shells: bash, zsh, fish, powershell",
-      name
-    ))),
-  }
-}
-
 fn run_user_action(
   action: UserAction,
   command: &str,
@@ -493,7 +239,7 @@ fn run_user_action(
       Ok((exit_code, None))
     }
     UserAction::Explain => {
-      let explanation = explain_command(model, command)?;
+      let explanation = command_ops::explain_command(model, command)?;
       println!("\n{}", "Explanation:".green());
       println!("{}\n", explanation);
       Ok((0, None))
@@ -504,7 +250,7 @@ fn run_user_action(
         println!("{}", "No refinement provided.".yellow());
         Ok((0, None))
       } else {
-        let refined_result = refine_command(model, messages.to_vec(), &refinement)?;
+        let refined_result = command_ops::refine_command(model, messages.to_vec(), &refinement)?;
         Ok((0, Some(refined_result)))
       }
     }
@@ -529,22 +275,15 @@ fn command_interaction_loop(
       run_user_action(action, &current_command, &current_messages, model)?;
 
     match action {
-      UserAction::Copy | UserAction::Run => {
-        return Ok(exit_code);
-      }
-      UserAction::Explain => {
-        continue;
-      }
+      UserAction::Copy | UserAction::Run => return Ok(exit_code),
+      UserAction::Explain => continue,
       UserAction::Refine => {
         if let Some((refined_command, refined_messages)) = new_result {
           current_command = refined_command;
           current_messages = refined_messages;
         }
-        continue;
       }
-      UserAction::Abort => {
-        return Ok(1);
-      }
+      UserAction::Abort => return Ok(1),
     }
   }
 }
