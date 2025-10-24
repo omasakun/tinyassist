@@ -2023,7 +2023,9 @@ dependencies = [
  "directories",
  "dotenvy",
  "genai",
+ "log",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

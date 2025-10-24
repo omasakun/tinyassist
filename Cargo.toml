@@ -1,12 +1,31 @@
-[workspace]
-resolver = "2"
-members = [
-    "packages/tinyassist",
-]
+cargo-features = ["profile-rustflags"]
+
+[package]
+name = "tinyassist"
+version = "0.1.0"
+edition = "2024"
 
 [profile.release]
-strip = true
-opt-level = "z"
-lto = true
 codegen-units = 1
+debug = "line-tables-only"
+lto = "fat"
+opt-level = "s"
 panic = "abort"
+rustflags = ["-Z", "location-detail=none"]
+split-debuginfo = "packed"
+# strip = "symbols"
+
+[dependencies]
+anyhow = "1.0"
+arboard = "3.0"
+clap = { version = "4.0", features = ["derive"] }
+colored = "3.0"
+crossterm = "0.29"
+directories = "6.0"
+dotenvy = "0.15"
+genai = "0.4"
+tokio = { version = "1.0", features = ["full"] }
+
+# Improve runtime performance with compile-time filtering
+log = { version = "0.4", features = ["release_max_level_off"] }
+tracing = { version = "0.1", features = ["release_max_level_off"] }

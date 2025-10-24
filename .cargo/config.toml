@@ -1,0 +1,5 @@
+# https://doc.rust-lang.org/cargo/reference/config.html
+
+[unstable]
+build-std = ["std", "panic_abort"]
+build-std-features = ["default", "optimize_for_size"]
