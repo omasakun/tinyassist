@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)]
 
-mod chat_handler;
 mod command_ops;
 mod context;
 mod error;
@@ -16,7 +15,7 @@ use std::process::ExitCode;
 use argh::FromArgs;
 use colored::Colorize;
 use directories::ProjectDirs;
-use terminal::{ChatAction, UserAction, copy_to_clipboard, execute_command, prompt};
+use terminal::{UserAction, copy_to_clipboard, execute_command, prompt};
 
 use crate::context::ShellContext;
 use crate::error::{AppError, Result};
@@ -91,7 +90,7 @@ fn main_inner() -> Result<ExitCode> {
 
   // Handle --info flag
   if args.info {
-    if let Some(config_dir) = config_dir() {
+    if let Some(config_dir) = Args::config_dir() {
       println!("Config directory: {}", config_dir.display());
       let env_file = config_dir.join(".env");
       if env_file.exists() {
@@ -106,21 +105,19 @@ fn main_inner() -> Result<ExitCode> {
     return Ok(ExitCode::SUCCESS);
   }
 
-  let exit_code = if args.chat {
+  if args.chat {
     let initial_prompt = if args.prompt.is_empty() { None } else { Some(args.prompt()) };
-    handle_chat_mode(&args.model, initial_prompt)?
+    handle_chat_mode(&args.model, initial_prompt)
   } else if args.fix {
-    handle_fix_mode(&args.model, &args.prompt())?
+    handle_fix_mode(&args.model, &args.prompt())
   } else {
     let prompt_text = if args.prompt.is_empty() { prompt("Prompt: ")? } else { args.prompt() };
-    handle_normal_mode(&args.model, &prompt_text)?
-  };
-
-  Ok(ExitCode::from(exit_code as u8))
+    handle_normal_mode(&args.model, &prompt_text)
+  }
 }
 
 /// Handle chat mode: free form conversation with LLM
-fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<i32> {
+fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<ExitCode> {
   let client = Client::new();
   let mut messages: Vec<ChatMessage> = Vec::new();
 
@@ -137,26 +134,21 @@ fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<i32> 
 
     messages.push(ChatMessage::user(&user_input));
 
-    let response_text = chat_handler::handle_chat_response(model, &client, &mut messages)?;
+    let chat_req = ChatRequest::new(messages.clone());
+    let chat_res = client.exec_chat(model, chat_req)?;
 
-    loop {
-      let action = ChatAction::ask()?;
+    let response_text = chat_res
+      .first_text()
+      .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?
+      .to_string();
 
-      if action == ChatAction::Abort {
-        return Ok(0);
-      }
-
-      let should_continue =
-        chat_handler::process_chat_action(action, &response_text, &mut messages, model, &client)?;
-      if should_continue {
-        break;
-      }
-    }
+    println!("{}  {}", "AI:".green(), response_text);
+    messages.push(ChatMessage::assistant(&response_text));
   }
 }
 
 /// Handle --fix mode: fix the last command
-fn handle_fix_mode(model: &str, prompt: &str) -> Result<i32> {
+fn handle_fix_mode(model: &str, prompt: &str) -> Result<ExitCode> {
   let context = ShellContext::current()?;
 
   println!(
@@ -190,7 +182,7 @@ fn handle_fix_mode(model: &str, prompt: &str) -> Result<i32> {
 }
 
 /// Handle normal mode: generate command from prompt
-fn handle_normal_mode(model: &str, prompt: &str) -> Result<i32> {
+fn handle_normal_mode(model: &str, prompt: &str) -> Result<ExitCode> {
   if prompt.trim().is_empty() {
     return Err(AppError::Context("Please provide a prompt".to_string()));
   }
@@ -213,77 +205,47 @@ fn load_env() {
   }
 }
 
-/// Get the configuration directory for tinyassist
-fn config_dir() -> Option<PathBuf> {
-  Args::config_dir()
-}
-
-fn print_response(command: &str) {
-  println!("{} {}", ">".blue(), command);
-}
-
-fn run_user_action(
-  action: UserAction,
-  command: &str,
-  messages: &[ChatMessage],
-  model: &str,
-) -> Result<(i32, Option<(String, Vec<ChatMessage>)>)> {
-  match action {
-    UserAction::Copy => {
-      copy_to_clipboard(command)?;
-      println!("{}", "Copied to clipboard".green());
-      Ok((0, None))
-    }
-    UserAction::Run => {
-      let exit_code = execute_command(command)?;
-      Ok((exit_code, None))
-    }
-    UserAction::Explain => {
-      let explanation = command_ops::explain_command(model, command)?;
-      println!("\n{}", "Explanation:".green());
-      println!("{}\n", explanation);
-      Ok((0, None))
-    }
-    UserAction::Refine => {
-      let refinement = prompt("Instructions: ")?;
-      if refinement.trim().is_empty() {
-        println!("{}", "No refinement provided.".yellow());
-        Ok((0, None))
-      } else {
-        let refined_result = command_ops::refine_command(model, messages.to_vec(), &refinement)?;
-        Ok((0, Some(refined_result)))
-      }
-    }
-    UserAction::Abort => Ok((1, None)),
-  }
-}
-
 /// Interactive command loop that handles user actions
 fn command_interaction_loop(
   initial_command: String,
   initial_messages: Vec<ChatMessage>,
   model: &str,
-) -> Result<i32> {
+) -> Result<ExitCode> {
   let mut current_command = initial_command;
   let mut current_messages = initial_messages;
 
   loop {
-    print_response(&current_command);
+    println!("{} {}", ">".blue(), current_command);
 
     let action = UserAction::ask()?;
-    let (exit_code, new_result) =
-      run_user_action(action, &current_command, &current_messages, model)?;
 
     match action {
-      UserAction::Copy | UserAction::Run => return Ok(exit_code),
-      UserAction::Explain => continue,
+      UserAction::Copy => {
+        copy_to_clipboard(&current_command)?;
+        println!("{}", "Copied to clipboard".green());
+        return Ok(ExitCode::SUCCESS);
+      }
+      UserAction::Run => {
+        let exit_code = execute_command(&current_command)?;
+        return Ok(ExitCode::from(exit_code as u8));
+      }
+      UserAction::Explain => {
+        let explanation = command_ops::explain_command(model, &current_command)?;
+        println!("\n{}", "Explanation:".green());
+        println!("{}\n", explanation);
+      }
       UserAction::Refine => {
-        if let Some((refined_command, refined_messages)) = new_result {
+        let refinement = prompt("Instructions: ")?;
+        if !refinement.trim().is_empty() {
+          let (refined_command, refined_messages) =
+            command_ops::refine_command(model, current_messages.clone(), &refinement)?;
           current_command = refined_command;
           current_messages = refined_messages;
+        } else {
+          println!("{}", "No refinement provided.".yellow());
         }
       }
-      UserAction::Abort => return Ok(1),
+      UserAction::Abort => return Ok(ExitCode::from(1)),
     }
   }
 }

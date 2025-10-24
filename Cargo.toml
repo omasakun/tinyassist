@@ -8,8 +8,8 @@ edition = "2024"
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = "s"
-panic = "abort"
+opt-level = "z"
+panic = "immediate-abort"
 rustflags = ["-Zlocation-detail=none", "-Zfmt-debug=none"]
 strip = true
 

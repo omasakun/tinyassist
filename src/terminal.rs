@@ -53,45 +53,6 @@ impl UserAction {
   }
 }
 
-#[derive(Debug, Clone, Copy, EnumString, EnumIter, PartialEq)]
-#[strum(serialize_all = "lowercase")]
-pub enum ChatAction {
-  #[strum(serialize = "c")]
-  Copy,
-  #[strum(serialize = "r")]
-  Revert,
-  #[strum(serialize = "n")]
-  Next,
-  #[strum(serialize = "a")]
-  Abort,
-}
-
-impl ChatAction {
-  pub fn ask() -> Result<Self> {
-    loop {
-      print!("{}", "[c] Copy  [r] Revert  [n] Next  [a] Abort > ".blue());
-      io::stdout().flush()?;
-
-      let c = loop {
-        match Term::stderr().read_key()? {
-          Key::Char(ch) => break ch.to_ascii_lowercase(),
-          Key::Escape => break 'a',
-          _ => {}
-        }
-      };
-
-      println!();
-
-      if let Ok(action) = ChatAction::from_str(&c.to_string()) {
-        return Ok(action);
-      } else {
-        println!("{}", "Invalid choice. Please try again.".yellow());
-        continue;
-      }
-    }
-  }
-}
-
 // Input and execution utilities
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
   let mut clipboard = Clipboard::new()?;
