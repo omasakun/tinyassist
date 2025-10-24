@@ -1,54 +1,55 @@
 use std::env;
-use std::path::Path;
 
 use crate::error::Result;
+use crate::platform::{Os, Shell};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ShellContext {
-  pub last_command: String,
+  pub last_command: Option<String>,
   pub exit_code: Option<i32>,
   pub working_directory: String,
-  pub shell: String,
+  pub shell: Shell,
+  pub os: Os,
 }
 
 impl ShellContext {
   pub fn current() -> Result<Self> {
     let working_directory = env::current_dir()?.to_string_lossy().to_string();
+    let os = Os::detect();
+    let shell = Shell::detect();
 
     Ok(ShellContext {
       last_command: Self::last_command(),
       exit_code: Self::exit_code(),
       working_directory,
-      shell: Self::shell(),
+      shell,
+      os,
     })
   }
 
-  pub fn format_for_llm(&self) -> String {
+  pub fn format_for_llm(&self, fix_mode: bool) -> String {
     let exit_code_info =
-      self.exit_code.map(|code| code.to_string()).unwrap_or_else(|| "N/A".to_string());
+      self.exit_code.map(|code| code.to_string()).unwrap_or_else(|| "n/a".to_string());
 
-    format!(
-      "Last command: {}\nExit code: {}\n\nWorking directory: {}\nShell: {}",
-      self.last_command, exit_code_info, self.working_directory, self.shell
-    )
+    if fix_mode {
+      format!(
+        "OS: {}\nShell: {}\nWorking directory: {}\nLast command: {} (exit code: {})",
+        self.os,
+        self.shell,
+        self.working_directory,
+        self.last_command.as_ref().unwrap_or(&"unknown".into()),
+        exit_code_info
+      )
+    } else {
+      format!(
+        "OS: {}\nShell: {}\nWorking directory: {}",
+        self.os, self.shell, self.working_directory
+      )
+    }
   }
 
-  fn shell() -> String {
-    env::var("TA_SHELL")
-      .or_else(|_| env::var("SHELL"))
-      .ok()
-      .and_then(|path| {
-        Path::new(&path).file_name().and_then(|name| name.to_str()).map(String::from)
-      })
-      .unwrap_or_else(|| "bash".to_string())
-  }
-
-  fn last_command() -> String {
-    env::var("TA_LAST_COMMAND")
-      .ok()
-      .map(|cmd| cmd.trim().to_string())
-      .filter(|cmd| !cmd.is_empty())
-      .unwrap_or_default()
+  fn last_command() -> Option<String> {
+    env::var("TA_LAST_COMMAND").ok().map(|cmd| cmd.trim().to_string()).filter(|cmd| !cmd.is_empty())
   }
 
   fn exit_code() -> Option<i32> {

@@ -10,6 +10,7 @@ use console::{Key, Term};
 use strum_macros::{EnumIter, EnumString};
 
 use crate::error::Result;
+use crate::platform::Shell;
 
 #[derive(Debug, Clone, Copy, EnumString, EnumIter)]
 #[strum(serialize_all = "lowercase")]
@@ -32,13 +33,11 @@ impl UserAction {
       print!("{}", "[c] Copy  [r] Run  [e] Explain  [f] Refine  [a] Abort > ".blue());
       io::stdout().flush()?;
 
-      let key = Term::stderr().read_key()?;
-      let c = match key {
-        Key::Char(ch) => ch.to_ascii_lowercase(),
-        Key::Escape => 'a',
-        _ => {
-          println!();
-          continue;
+      let c = loop {
+        match Term::stderr().read_key()? {
+          Key::Char(ch) => break ch.to_ascii_lowercase(),
+          Key::Escape => break 'a',
+          _ => {}
         }
       };
 
@@ -54,11 +53,6 @@ impl UserAction {
   }
 }
 
-// Color utilities
-pub fn error(message: &str) {
-  eprintln!("{}", message.red());
-}
-
 // Input and execution utilities
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
   let mut clipboard = Clipboard::new()?;
@@ -71,7 +65,15 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
 }
 
 pub fn execute_command(command: &str) -> Result<i32> {
-  let status = Command::new("sh").arg("-c").arg(command).status()?;
+  let shell = Shell::detect();
+  let (shell, args) = shell.get_shell_command(command);
+
+  let mut cmd = Command::new(&shell);
+  for arg in args {
+    cmd.arg(arg);
+  }
+
+  let status = cmd.status()?;
 
   Ok(status.code().unwrap_or(1))
 }

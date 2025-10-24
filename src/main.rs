@@ -3,6 +3,7 @@
 mod context;
 mod error;
 mod genai;
+mod platform;
 mod terminal;
 
 use std::path::PathBuf;
@@ -11,47 +12,49 @@ use std::process::ExitCode;
 use argh::FromArgs;
 use colored::Colorize;
 use directories::ProjectDirs;
-use terminal::{UserAction, copy_to_clipboard, error, execute_command, prompt};
+use indoc::indoc;
+use terminal::{UserAction, copy_to_clipboard, execute_command, prompt};
 
 use crate::context::ShellContext;
 use crate::error::{AppError, Result};
 use crate::genai::{ChatMessage, ChatRequest, Client};
+use crate::platform::Shell;
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
-const GENERATE_SYSTEM_PROMPT: &str = r#"You are an AI designed to help users identify the precise shell command they need.
-Always provide a concise shell command.
+const GENERATE_SYSTEM_PROMPT: &str = indoc! {"
+  You are an AI designed to help users identify the precise shell command they need.
+  Always provide a concise shell command.
 
-Important:
-- Think hard about the command you are going to provide, and make sure it is the best one.
-- No shebang, no explanations, no extra text. Just the command.
+  Important:
+  - Think hard about the command you are going to provide, and make sure it is the best one.
+  - No shebang, no explanations, no extra text. Just the command.
+"};
 
-User uses Linux/macOS"#;
+const FIX_SYSTEM_PROMPT: &str = indoc! {"
+  You are a helpful AI that fixes failed shell commands.
+  Analyze the provided command and suggest a corrected version.
 
-const FIX_SYSTEM_PROMPT: &str = r#"You are a helpful AI that fixes failed shell commands.
-Analyze the provided command and suggest a corrected version.
-
-Important:
-- Only provide the corrected command, no explanations, no shebang, no extra text.
-- Fix common issues like: missing sudo, typos, wrong flags, missing files/directories
-- Keep the original intent of the command
-- If the command seems correct, suggest checking prerequisites or dependencies
-
-User uses Linux/macOS"#;
+  Important:
+  - Only provide the corrected command, no explanations, no shebang, no extra text.
+  - Fix common issues like: missing sudo, typos, wrong flags, missing files/directories
+  - Keep the original intent of the command
+  - If the command seems correct, suggest checking prerequisites or dependencies
+"};
 
 const EXPLAIN_SYSTEM_PROMPT: &str =
   "You are a helpful AI that explains shell commands very concisely. Keep it under 50 words.";
 
-/// CLI Arguments
-#[derive(FromArgs)]
 /// Generate shell commands from natural language descriptions
+#[derive(FromArgs)]
+#[argh(help_triggers("--help"))]
 pub struct Args {
   /// model to use
   #[argh(option, default = "DEFAULT_MODEL.to_string()")]
   pub model: String,
 
   /// fix the last command
-  #[argh(switch)]
+  #[argh(switch, short = 'f')]
   pub fix: bool,
 
   /// show config info
@@ -59,11 +62,15 @@ pub struct Args {
   pub info: bool,
 
   /// generate shell integration script
-  #[argh(switch)]
-  pub init: bool,
+  #[argh(option)]
+  pub init: Option<String>,
+
+  /// alias name for the shell function (used with --init)
+  #[argh(option)]
+  pub alias: Option<String>,
 
   /// natural language description of the command you want
-  #[argh(positional)]
+  #[argh(positional, greedy)]
   pub prompt: Vec<String>,
 }
 
@@ -77,14 +84,25 @@ impl Args {
   }
 }
 
-fn main() -> Result<ExitCode> {
+fn main() -> ExitCode {
+  match main_inner() {
+    Ok(code) => code,
+    Err(e) => {
+      eprintln!("{}: {}", "Error".red(), e);
+      ExitCode::from(1)
+    }
+  }
+}
+
+fn main_inner() -> Result<ExitCode> {
   load_env();
 
   let args: Args = argh::from_env();
 
-  // Handle --init flag
-  if args.init {
-    print_shell_integration(args.prompt.first().map(|s| s.as_str()).unwrap_or("ta"))?;
+  // Handle --init option
+  if let Some(shell_name) = &args.init {
+    let alias_name = args.alias.as_deref().unwrap_or("ta");
+    print_shell_integration(shell_name, alias_name)?;
     return Ok(ExitCode::SUCCESS);
   }
 
@@ -101,6 +119,7 @@ fn main() -> Result<ExitCode> {
     } else {
       println!("{}", "Unable to determine configuration directory".red());
     }
+    println!("\nContext for LLM: \n{}", ShellContext::current()?.format_for_llm(true));
     return Ok(ExitCode::SUCCESS);
   }
 
@@ -117,7 +136,11 @@ fn main() -> Result<ExitCode> {
 fn handle_fix_mode(model: &str) -> Result<i32> {
   let context = ShellContext::current()?;
 
-  println!("{}", format!("Last command: {}", context.last_command).yellow());
+  println!(
+    "{}",
+    format!("Last command: {}", context.last_command.as_ref().unwrap_or(&"unknown".into()))
+      .yellow()
+  );
 
   let (command, messages) = fix_last_command(model, &context)?;
   command_interaction_loop(command, messages, model)
@@ -126,8 +149,7 @@ fn handle_fix_mode(model: &str) -> Result<i32> {
 /// Handle normal mode: generate command from prompt
 fn handle_normal_mode(model: &str, prompt: &str) -> Result<i32> {
   if prompt.trim().is_empty() {
-    error("Please provide a prompt");
-    return Ok(1);
+    return Err(AppError::Context("Please provide a prompt".to_string()));
   }
 
   let context = ShellContext::current()?;
@@ -142,7 +164,7 @@ fn fix_last_command(
 ) -> Result<(String, Vec<ChatMessage>)> {
   let client = Client::new();
 
-  let contextual_prompt = context.format_for_llm();
+  let contextual_prompt = context.format_for_llm(true);
 
   let messages =
     vec![ChatMessage::system(FIX_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
@@ -165,11 +187,7 @@ fn generate_command(
 ) -> Result<(String, Vec<ChatMessage>)> {
   let client = Client::new();
 
-  let contextual_prompt = format!(
-    "{}\n\nContext:\nWorking directory: {}\nShell: {}",
-    user_prompt, context.working_directory, context.shell
-  );
-
+  let contextual_prompt = format!("{}\n\n{}", user_prompt, context.format_for_llm(false));
   let messages =
     vec![ChatMessage::system(GENERATE_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
   let chat_req = ChatRequest::new(messages.clone());
@@ -243,49 +261,130 @@ fn print_response(command: &str) {
   println!("{} {}", ">".blue(), command);
 }
 
-fn detect_shell() -> String {
-  std::env::var("SHELL")
-    .ok()
-    .and_then(|path| {
-      std::path::Path::new(&path).file_name().and_then(|name| name.to_str()).map(String::from)
-    })
-    .unwrap_or_else(|| {
-      eprintln!("Could not detect shell from SHELL environment variable.");
-      eprintln!("Defaulting to bash.");
-      "bash".to_string()
-    })
-}
-
 fn print_bash_integration(alias_name: &str) {
   println!(
-    r#"# tinyassist shell integration for bash
-# Add this to your ~/.bashrc or ~/.bash_profile:
-# eval "$(tinyassist --init)"
+    "{}",
+    indoc! {"
+      # tinyassist shell integration for bash
+      # Add this to your ~/.bashrc or ~/.bash_profile:
+      # eval \"$(tinyassist --init bash)\"
 
-function {alias}() {{
-    export TA_EXIT_CODE=$?
-    export TA_SHELL=bash
-    export TA_LAST_COMMAND=$(fc -ln -1 2>/dev/null)
+      function {alias}() {
+          export TA_EXIT_CODE=$?
+          export TA_SHELL=bash
+          export TA_LAST_COMMAND=$(fc -ln -1 2>/dev/null)
 
-    tinyassist "$@"
+          tinyassist \"$@\"
 
-    unset TA_SHELL
-    unset TA_EXIT_CODE
-    unset TA_LAST_COMMAND
-}}"#,
-    alias = alias_name
+          unset TA_SHELL
+          unset TA_EXIT_CODE
+          unset TA_LAST_COMMAND
+      }
+    "}
+    .replace("{alias}", alias_name)
+  );
+}
+
+fn print_zsh_integration(alias_name: &str) {
+  println!(
+    "{}",
+    indoc! {"
+      # tinyassist shell integration for zsh
+      # Add this to your ~/.zshrc:
+      # eval \"$(tinyassist --init zsh)\"
+
+      function {alias}() {
+          export TA_EXIT_CODE=$?
+          export TA_SHELL=zsh
+          export TA_LAST_COMMAND=$(fc -ln -1 2>/dev/null)
+
+          tinyassist \"$@\"
+
+          unset TA_SHELL
+          unset TA_EXIT_CODE
+          unset TA_LAST_COMMAND
+      }
+    "}
+    .replace("{alias}", alias_name)
+  );
+}
+
+fn print_fish_integration(alias_name: &str) {
+  println!(
+    "{}",
+    indoc! {"
+      # tinyassist shell integration for fish
+      # Add this to your ~/.config/fish/config.fish:
+      # tinyassist --init fish | source
+
+      function {alias}
+          set -x TA_EXIT_CODE $status
+          set -x TA_SHELL fish
+          set -x TA_LAST_COMMAND (builtin history -1)
+
+          tinyassist $argv
+
+          set -e TA_SHELL
+          set -e TA_EXIT_CODE
+          set -e TA_LAST_COMMAND
+      end
+    "}
+    .replace("{alias}", alias_name)
+  );
+}
+
+fn print_powershell_integration(alias_name: &str) {
+  println!(
+    "{}",
+    indoc! {"
+      # tinyassist shell integration for PowerShell
+      # Add this to your $PROFILE:
+      # Invoke-Expression (& tinyassist --init pwsh | Out-String)
+
+      function {alias} {
+          $env:TA_EXIT_CODE = if ($?) { 0 } else { $LASTEXITCODE }
+          $env:TA_SHELL = \"pwsh\"
+          $env:TA_LAST_COMMAND = @(Get-History -Count 1).CommandLine
+
+          & tinyassist @args
+
+          Remove-Item Env:TA_SHELL -ErrorAction SilentlyContinue
+          Remove-Item Env:TA_EXIT_CODE -ErrorAction SilentlyContinue
+          Remove-Item Env:TA_LAST_COMMAND -ErrorAction SilentlyContinue
+      }
+    "}
+    .replace("{alias}", alias_name)
   );
 }
 
 /// Print shell integration script for the specified shell
-fn print_shell_integration(alias_name: &str) -> Result<()> {
-  let shell = detect_shell();
+fn print_shell_integration(shell_name: &str, alias_name: &str) -> Result<()> {
+  let shell = Shell::from_name(shell_name);
 
-  if shell == "bash" {
-    print_bash_integration(alias_name);
-    Ok(())
-  } else {
-    Err(AppError::Context(format!("Unsupported shell: {}. Supported shells: bash", shell)))
+  match shell {
+    Shell::Bash => {
+      print_bash_integration(alias_name);
+      Ok(())
+    }
+    Shell::Zsh => {
+      print_zsh_integration(alias_name);
+      Ok(())
+    }
+    Shell::Fish => {
+      print_fish_integration(alias_name);
+      Ok(())
+    }
+    Shell::PowerShell => {
+      print_powershell_integration(alias_name);
+      Ok(())
+    }
+    Shell::Cmd => {
+      Err(AppError::Context("Shell integration not yet supported for cmd.exe".to_string()))
+    }
+    Shell::Unknown(name) => Err(AppError::Context(format!(
+      "Unsupported shell: {}. Supported shells: bash, zsh, fish, powershell",
+      name
+    ))),
   }
 }
 

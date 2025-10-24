@@ -57,3 +57,7 @@ Especially if a method isn't found, it may be behind an optional feature
 - Add `mod` declarations to `lib.rs` when creating new modules
 - Use `pub mod` only in `lib.rs`; in other files use `mod` and `pub use` for re-exports
 - One responsibility per function; break functions >30 lines into helpers
+
+### Multi-line Text
+
+- Use the `indoc` crate for multi-line strings to improve readability
