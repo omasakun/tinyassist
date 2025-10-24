@@ -1,4 +1,5 @@
 mod context;
+mod genai;
 mod terminal;
 
 use std::path::PathBuf;
@@ -8,11 +9,10 @@ use anyhow::{Context as _, Result};
 use clap::Parser;
 use colored::Colorize;
 use directories::ProjectDirs;
-use genai::Client;
-use genai::chat::{ChatMessage, ChatRequest};
 use terminal::{UserAction, copy_to_clipboard, error, execute_command, prompt};
 
 use crate::context::ShellContext;
+use crate::genai::{ChatMessage, ChatRequest, Client};
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
@@ -139,7 +139,7 @@ async fn fix_last_command(
   model: &str,
   context: &context::ShellContext,
 ) -> Result<(String, Vec<ChatMessage>)> {
-  let client = Client::default();
+  let client = Client::new();
 
   let contextual_prompt = context.format_for_llm();
 
@@ -148,10 +148,8 @@ async fn fix_last_command(
 
   let chat_req = ChatRequest::new(messages.clone());
 
-  let chat_res = client
-    .exec_chat(model, chat_req, None)
-    .await
-    .context("Failed to execute fix command request")?;
+  let chat_res =
+    client.exec_chat(model, chat_req).await.context("Failed to execute fix command request")?;
 
   let response_text = chat_res.first_text().context("No response text from AI")?;
 
@@ -163,7 +161,7 @@ async fn generate_command(
   user_prompt: &str,
   context: &context::ShellContext,
 ) -> Result<(String, Vec<ChatMessage>)> {
-  let client = Client::default();
+  let client = Client::new();
 
   let contextual_prompt = format!(
     "{}\n\nContext:\nWorking directory: {}\nShell: {}",
@@ -175,7 +173,7 @@ async fn generate_command(
   let chat_req = ChatRequest::new(messages.clone());
 
   let chat_res =
-    client.exec_chat(model, chat_req, None).await.context("Failed to execute chat request")?;
+    client.exec_chat(model, chat_req).await.context("Failed to execute chat request")?;
 
   let response_text = chat_res.first_text().context("No response text from AI")?;
 
@@ -183,7 +181,7 @@ async fn generate_command(
 }
 
 async fn explain_command(model: &str, command: &str) -> Result<String> {
-  let client = Client::default();
+  let client = Client::new();
 
   let explain_prompt =
     format!("Explain this shell command in 1-2 simple sentences:\n\n{}", command);
@@ -194,7 +192,7 @@ async fn explain_command(model: &str, command: &str) -> Result<String> {
   ]);
 
   let chat_res =
-    client.exec_chat(model, chat_req, None).await.context("Failed to execute explain request")?;
+    client.exec_chat(model, chat_req).await.context("Failed to execute explain request")?;
 
   let response_text = chat_res.first_text().context("No explanation text from AI")?;
 
@@ -206,14 +204,14 @@ async fn refine_command(
   mut messages: Vec<ChatMessage>,
   refinement: &str,
 ) -> Result<(String, Vec<ChatMessage>)> {
-  let client = Client::default();
+  let client = Client::new();
 
   messages.push(ChatMessage::user(refinement));
 
   let chat_req = ChatRequest::new(messages.clone());
 
   let chat_res =
-    client.exec_chat(model, chat_req, None).await.context("Failed to execute refine request")?;
+    client.exec_chat(model, chat_req).await.context("Failed to execute refine request")?;
 
   let response_text = chat_res.first_text().context("No refined command from AI")?;
 

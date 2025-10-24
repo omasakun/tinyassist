@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 use std::process::Command;
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
@@ -8,13 +9,20 @@ use arboard::Clipboard;
 use colored::Colorize;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use strum_macros::{EnumIter, EnumString};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter)]
+#[strum(serialize_all = "lowercase")]
 pub enum UserAction {
+  #[strum(serialize = "c")]
   Copy,
+  #[strum(serialize = "r")]
   Run,
+  #[strum(serialize = "e")]
   Explain,
+  #[strum(serialize = "f")]
   Refine,
+  #[strum(serialize = "a")]
   Abort,
 }
 
@@ -39,16 +47,11 @@ impl UserAction {
       disable_raw_mode()?;
       println!();
 
-      match key {
-        'c' => return Ok(UserAction::Copy),
-        'r' => return Ok(UserAction::Run),
-        'e' => return Ok(UserAction::Explain),
-        'f' => return Ok(UserAction::Refine),
-        'a' => return Ok(UserAction::Abort),
-        _ => {
-          println!("{}", "Invalid choice. Please try again.".yellow());
-          continue;
-        }
+      if let Ok(action) = UserAction::from_str(&key.to_string()) {
+        return Ok(action);
+      } else {
+        println!("{}", "Invalid choice. Please try again.".yellow());
+        continue;
       }
     }
   }
