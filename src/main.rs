@@ -124,7 +124,7 @@ fn main_inner() -> Result<ExitCode> {
   }
 
   let exit_code = if args.fix {
-    handle_fix_mode(&args.model)?
+    handle_fix_mode(&args.model, &args.prompt())?
   } else {
     handle_normal_mode(&args.model, &args.prompt())?
   };
@@ -133,7 +133,7 @@ fn main_inner() -> Result<ExitCode> {
 }
 
 /// Handle --fix mode: fix the last command
-fn handle_fix_mode(model: &str) -> Result<i32> {
+fn handle_fix_mode(model: &str, prompt: &str) -> Result<i32> {
   let context = ShellContext::current()?;
 
   println!(
@@ -142,7 +142,28 @@ fn handle_fix_mode(model: &str) -> Result<i32> {
       .yellow()
   );
 
-  let (command, messages) = fix_last_command(model, &context)?;
+  let client = Client::new();
+
+  let contextual_prompt = if prompt.is_empty() {
+    context.format_for_llm(true)
+  } else {
+    format!(
+      "{}\n\nFix instructions: {}",
+      context.format_for_llm(true),
+      prompt
+    )
+  };
+
+  let messages = vec![ChatMessage::system(FIX_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
+
+  let chat_req = ChatRequest::new(messages.clone());
+  let chat_res = client.exec_chat(model, chat_req)?;
+
+  let response_text = chat_res
+    .first_text()
+    .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
+
+  let command = response_text.trim().to_string();
   command_interaction_loop(command, messages, model)
 }
 
@@ -156,28 +177,6 @@ fn handle_normal_mode(model: &str, prompt: &str) -> Result<i32> {
 
   let (command, messages) = generate_command(model, prompt, &context)?;
   command_interaction_loop(command, messages, model)
-}
-
-fn fix_last_command(
-  model: &str,
-  context: &context::ShellContext,
-) -> Result<(String, Vec<ChatMessage>)> {
-  let client = Client::new();
-
-  let contextual_prompt = context.format_for_llm(true);
-
-  let messages =
-    vec![ChatMessage::system(FIX_SYSTEM_PROMPT), ChatMessage::user(&contextual_prompt)];
-
-  let chat_req = ChatRequest::new(messages.clone());
-
-  let chat_res = client.exec_chat(model, chat_req)?;
-
-  let response_text = chat_res
-    .first_text()
-    .ok_or_else(|| AppError::Context("No response text from AI".to_string()))?;
-
-  Ok((response_text.trim().to_string(), messages))
 }
 
 fn generate_command(
