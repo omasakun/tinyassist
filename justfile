@@ -27,6 +27,10 @@ build-timing:
 install:
   cargo install --path .
 
+du:
+  @just build --quiet --release
+  @du -h {{release_dir}}/tinyassist
+
 # Run in debug mode
 [no-cd]
 run bin="tinyassist" *args:

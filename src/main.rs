@@ -37,7 +37,7 @@ pub struct Args {
   pub fix: bool,
 
   /// free form conversation
-  #[argh(switch)]
+  #[argh(switch, short = 'c')]
   pub chat: bool,
 
   /// show config info
