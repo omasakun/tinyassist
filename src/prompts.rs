@@ -23,5 +23,6 @@ impl Prompts {
     Important:
     - Think hard about the command you are going to provide, and make sure it is the best one.
     - No shebang, no explanations, no extra text. Just the command.
+    - Prefer to use relative paths where possible.
   "};
 }

@@ -19,6 +19,10 @@ check:
 build *args:
   @cargo build {{args}}
 
+# Build for windows
+build-windows:
+  @cargo build --target x86_64-pc-windows-gnu --release
+
 # Build with timing output
 build-timing:
   cargo clean --profile dev
