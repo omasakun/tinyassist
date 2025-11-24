@@ -9,3 +9,6 @@ target/
 
 .DS_Store
 Thumbs.db
+
+.devenv*
+.direnv
