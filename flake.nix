@@ -44,11 +44,6 @@
                 pkgs.fenix.complete.rustfmt
               ])
               rust-analyzer
-              pkg-config
-            ];
-
-            buildInputs = with pkgs; [
-              openssl
             ];
           };
         };
