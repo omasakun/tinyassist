@@ -2,6 +2,7 @@
 <div align="center">
   <h1>TinyAssist</h1>
   <p>Simple, cross-platform LLM assistant for shell.</p>
+  <a href="https://asciinema.org/a/1265710" target="_blank"><img src="https://asciinema.org/a/1265710.svg" /></a>
 </div>
 <br>
 <br>
