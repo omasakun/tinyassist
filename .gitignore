@@ -3,6 +3,9 @@
 node_modules/
 target/
 
+/result
+/result-*
+
 .nx/installation
 .nx/cache
 .nx/workspace-data

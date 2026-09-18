@@ -23,9 +23,13 @@ update:
 build *args:
   @cargo build {{args}}
 
-# Build for windows
+# Build for windows (static CRT)
 build-windows:
   @cargo build --target x86_64-pc-windows-gnu --release
+
+# Build static musl binary
+build-musl:
+  @cargo build --target x86_64-unknown-linux-musl --release
 
 # Build with timing output
 build-timing:
