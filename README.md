@@ -1,12 +1,18 @@
 # tinyassist
 
-Simple, cross-platform command-line assistant that generates shell commands from natural language descriptions.
+Simple and small cross-platform command-line assistant that suggests shell commands from natural language descriptions.
 
 Statically linked binaries are available for Linux (~2.0 MB) and Windows (~1.6 MB).
 
 ## Install
 
-Download a static binary from the releases page, or build from source:
+Download a static binary from the [releases page](https://github.com/omasakun/tinyassist/releases), or install via Cargo:
+
+```sh
+cargo install --git https://github.com/omasakun/tinyassist.git
+```
+
+Or build from source:
 
 ```sh
 just build           # native (glibc)
@@ -14,31 +20,19 @@ just build-musl      # static musl
 just build-windows   # static CRT
 ```
 
-## Configuration
-
-Set an API key for the provider that matches your model:
-
-| Provider  | Environment variable |
-| --------- | -------------------- |
-| OpenAI    | `OPENAI_API_KEY`     |
-| Anthropic | `ANTHROPIC_API_KEY`  |
-| Gemini    | `GEMINI_API_KEY`     |
-| Groq      | `GROQ_API_KEY`       |
-| DeepSeek  | `DEEPSEEK_API_KEY`   |
-
-Run `tinyassist --info` to check config location.
-
 ## Usage
 
 ```sh
+# 'ta' is the default alias for 'tinyassist'
 ta list large files  # suggest and run a command
 ta -f                # fix the last command
 ta -c hello          # free-form chat
+ta --help            # show all options
 ```
 
 ## Shell integration
 
-The shell function records the last command and exit code, which `-f` uses:
+Set up the shell integration to use the `ta` alias:
 
 ```sh
 # bash
@@ -54,9 +48,34 @@ tinyassist --init fish | source
 Invoke-Expression (& tinyassist --init pwsh | Out-String)
 ```
 
-`--alias <name>` changes the function name (default: `ta`).
+Add the above to your shell config to make it permanent.
+
+`--alias <name>` changes the alias from `ta` to `<name>`.
+
+## Configuration
+
+Set an API key for the provider that matches your model:
+
+| Provider  | Environment variable |
+| --------- | -------------------- |
+| OpenAI    | `OPENAI_API_KEY`     |
+| Anthropic | `ANTHROPIC_API_KEY`  |
+| Gemini    | `GEMINI_API_KEY`     |
+| Groq      | `GROQ_API_KEY`       |
+| DeepSeek  | `DEEPSEEK_API_KEY`   |
+
+Then set the model and reasoning effort:
+
+| Environment variable       | Default value  | Options                           |
+| -------------------------- | -------------- | --------------------------------- |
+| `DEFAULT_MODEL`            | `gpt-5.6-luna` | Provider-specific model names     |
+| `DEFAULT_REASONING_EFFORT` | `off`          | `off` / `low` / `medium` / `high` |
+
+Set via environment variables, or in a config file typically located at `~/.config/tinyassist/.env` (check `tinyassist --info` for the actual path).
 
 ## Development
+
+Requirements (recommended): [Nix](https://nixos.org/download.html), [direnv](https://direnv.net/), and [just](https://github.com/casey/just).
 
 Enter the Nix devShell (via `direnv` or `nix develop`), then:
 
@@ -66,4 +85,4 @@ just check  # fmt, check, clippy, test
 just run    # run the CLI
 ```
 
-Releases are built by `.github/workflows/release.yml` on `v*` tags.
+Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) on `v*` tags.
