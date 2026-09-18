@@ -3,6 +3,7 @@ perf_data := justfile_directory() / "perf.data"
 profile_json := justfile_directory() / "profile.json.gz"
 debug_dir := justfile_directory() / "target" / "debug"
 release_dir := justfile_directory() / "target" / "release"
+bin := "tinyassist"
 
 _default:
   @just --list --unsorted
@@ -10,10 +11,13 @@ _default:
 # Format, check, lint, and test
 check:
   cargo fmt
-  cargo update -Z unstable-options --breaking
   cargo check --quiet
   cargo clippy --quiet
   cargo test --quiet --tests
+
+# Update dependencies
+update:
+  cargo update -Z unstable-options --breaking
 
 # Build
 build *args:
@@ -37,31 +41,31 @@ du:
 
 # Run in debug mode
 [no-cd]
-run bin="tinyassist" *args:
+run *args:
   @just build --quiet --bin {{bin}}
   @{{debug_dir}}/{{bin}} {{args}}
 
 # Run in release mode
 [no-cd]
-run-release bin="tinyassist" *args:
+run-release *args:
   @just build --quiet --bin {{bin}} --release
   @{{release_dir}}/{{bin}} {{args}}
 
 # Run with strace
 [no-cd]
-strace bin="tinyassist" *args:
+strace *args:
   @just build --quiet --bin {{bin}}
   @strace -c -f {{debug_dir}}/{{bin}} {{args}}
 
 # Run with time
 [no-cd]
-time bin="tinyassist" *args:
+time *args:
   @just build --quiet --bin {{bin}}
   @/usr/bin/time -v {{debug_dir}}/{{bin}} {{args}}
 
 # Run with samply profiling
 [no-cd]
-samply bin="tinyassist" *args:
+samply *args:
   @just build --quiet --bin {{bin}}
   @samply record -o {{perf_data}} {{debug_dir}}/{{bin}} {{args}}
 

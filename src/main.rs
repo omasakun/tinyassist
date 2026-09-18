@@ -19,9 +19,10 @@ use terminal::{UserAction, copy_to_clipboard, execute_command, prompt};
 
 use crate::context::ShellContext;
 use crate::error::{AppError, Result};
-use crate::genai::{ChatMessage, ChatRequest, Client};
+use crate::genai::{ChatMessage, ChatRequest, Client, ReasoningEffort};
 
-const DEFAULT_MODEL: &str = "gpt-4o-mini";
+const DEFAULT_MODEL: &str = "gpt-5.6-luna";
+const DEFAULT_REASONING_EFFORT: &str = "none";
 
 /// Generate shell commands from natural language descriptions
 #[derive(FromArgs)]
@@ -30,6 +31,10 @@ pub struct Args {
   /// model to use
   #[argh(option, default = "DEFAULT_MODEL.to_string()")]
   pub model: String,
+
+  /// reasoning effort (off, none, minimal, low, medium, high, xhigh, max)
+  #[argh(option, default = "DEFAULT_REASONING_EFFORT.to_string()")]
+  pub reasoning_effort: String,
 
   /// fix the last command
   #[argh(switch, short = 'f')]
@@ -105,19 +110,37 @@ fn main_inner() -> Result<ExitCode> {
     return Ok(ExitCode::SUCCESS);
   }
 
+  let reasoning_effort = parse_reasoning_effort(&args.reasoning_effort)?;
+
   if args.chat {
     let initial_prompt = if args.prompt.is_empty() { None } else { Some(args.prompt()) };
-    handle_chat_mode(&args.model, initial_prompt)
+    handle_chat_mode(&args.model, reasoning_effort, initial_prompt)
   } else if args.fix {
-    handle_fix_mode(&args.model, &args.prompt())
+    handle_fix_mode(&args.model, reasoning_effort, &args.prompt())
   } else {
     let prompt_text = if args.prompt.is_empty() { prompt("Prompt: ")? } else { args.prompt() };
-    handle_normal_mode(&args.model, &prompt_text)
+    handle_normal_mode(&args.model, reasoning_effort, &prompt_text)
   }
 }
 
+/// Parse the reasoning effort option, treating "off" as "do not send it"
+fn parse_reasoning_effort(value: &str) -> Result<Option<ReasoningEffort>> {
+  if value.eq_ignore_ascii_case("off") {
+    return Ok(None);
+  }
+
+  value
+    .parse::<ReasoningEffort>()
+    .map(Some)
+    .map_err(|e| AppError::Context(format!("Invalid reasoning effort '{}': {}", value, e)))
+}
+
 /// Handle chat mode: free form conversation with LLM
-fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<ExitCode> {
+fn handle_chat_mode(
+  model: &str,
+  reasoning_effort: Option<ReasoningEffort>,
+  initial_prompt: Option<String>,
+) -> Result<ExitCode> {
   let client = Client::new();
   let mut messages: Vec<ChatMessage> = Vec::new();
 
@@ -135,7 +158,7 @@ fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<ExitC
     messages.push(ChatMessage::user(&user_input));
 
     let chat_req = ChatRequest::new(messages.clone());
-    let chat_res = client.exec_chat(model, chat_req)?;
+    let chat_res = client.exec_chat(model, reasoning_effort, chat_req)?;
 
     let response_text = chat_res
       .first_text()
@@ -148,7 +171,11 @@ fn handle_chat_mode(model: &str, initial_prompt: Option<String>) -> Result<ExitC
 }
 
 /// Handle --fix mode: fix the last command
-fn handle_fix_mode(model: &str, prompt: &str) -> Result<ExitCode> {
+fn handle_fix_mode(
+  model: &str,
+  reasoning_effort: Option<ReasoningEffort>,
+  prompt: &str,
+) -> Result<ExitCode> {
   let context = ShellContext::current()?;
 
   println!(
@@ -169,7 +196,7 @@ fn handle_fix_mode(model: &str, prompt: &str) -> Result<ExitCode> {
     vec![ChatMessage::system(prompts::Prompts::FIX), ChatMessage::user(&contextual_prompt)];
 
   let chat_req = ChatRequest::new(messages.clone());
-  let chat_res = client.exec_chat(model, chat_req)?;
+  let chat_res = client.exec_chat(model, reasoning_effort, chat_req)?;
 
   let response_text = chat_res
     .first_text()
@@ -178,11 +205,15 @@ fn handle_fix_mode(model: &str, prompt: &str) -> Result<ExitCode> {
   let command = response_text.trim().to_string();
   let mut messages_with_response = messages;
   messages_with_response.push(ChatMessage::assistant(&command));
-  command_interaction_loop(command, messages_with_response, model)
+  command_interaction_loop(command, messages_with_response, model, reasoning_effort)
 }
 
 /// Handle normal mode: generate command from prompt
-fn handle_normal_mode(model: &str, prompt: &str) -> Result<ExitCode> {
+fn handle_normal_mode(
+  model: &str,
+  reasoning_effort: Option<ReasoningEffort>,
+  prompt: &str,
+) -> Result<ExitCode> {
   if prompt.trim().is_empty() {
     return Err(AppError::Context("Please provide a prompt".to_string()));
   }
@@ -190,8 +221,8 @@ fn handle_normal_mode(model: &str, prompt: &str) -> Result<ExitCode> {
   let context = ShellContext::current()?;
 
   let (command, messages) =
-    command_ops::generate_command(model, prompt, &context.format_for_llm(false))?;
-  command_interaction_loop(command, messages, model)
+    command_ops::generate_command(model, reasoning_effort, prompt, &context.format_for_llm(false))?;
+  command_interaction_loop(command, messages, model, reasoning_effort)
 }
 
 /// Load .env file if it exists
@@ -210,6 +241,7 @@ fn command_interaction_loop(
   initial_command: String,
   initial_messages: Vec<ChatMessage>,
   model: &str,
+  reasoning_effort: Option<ReasoningEffort>,
 ) -> Result<ExitCode> {
   let mut current_command = initial_command;
   let mut current_messages = initial_messages;
@@ -230,15 +262,19 @@ fn command_interaction_loop(
         return Ok(ExitCode::from(exit_code as u8));
       }
       UserAction::Explain => {
-        let explanation = command_ops::explain_command(model, &current_command)?;
+        let explanation = command_ops::explain_command(model, reasoning_effort, &current_command)?;
         println!("\n{}", "Explanation:".green());
         println!("{}\n", explanation);
       }
       UserAction::Refine => {
         let refinement = prompt("Instructions: ")?;
         if !refinement.trim().is_empty() {
-          let (refined_command, refined_messages) =
-            command_ops::refine_command(model, current_messages.clone(), &refinement)?;
+          let (refined_command, refined_messages) = command_ops::refine_command(
+            model,
+            reasoning_effort,
+            current_messages.clone(),
+            &refinement,
+          )?;
           current_command = refined_command;
           current_messages = refined_messages;
         } else {

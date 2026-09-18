@@ -1,8 +1,9 @@
 use crate::error::{AppError, Result};
-use crate::genai::{ChatMessage, ChatRequest, Client};
+use crate::genai::{ChatMessage, ChatRequest, Client, ReasoningEffort};
 
 pub fn generate_command(
   model: &str,
+  reasoning_effort: Option<ReasoningEffort>,
   user_prompt: &str,
   context_info: &str,
 ) -> Result<(String, Vec<ChatMessage>)> {
@@ -15,7 +16,7 @@ pub fn generate_command(
   ];
   let chat_req = ChatRequest::new(messages.clone());
 
-  let chat_res = client.exec_chat(model, chat_req)?;
+  let chat_res = client.exec_chat(model, reasoning_effort, chat_req)?;
 
   let response_text = chat_res
     .first_text()
@@ -28,7 +29,11 @@ pub fn generate_command(
   Ok((command, messages_with_response))
 }
 
-pub fn explain_command(model: &str, command: &str) -> Result<String> {
+pub fn explain_command(
+  model: &str,
+  reasoning_effort: Option<ReasoningEffort>,
+  command: &str,
+) -> Result<String> {
   let client = Client::new();
 
   let explain_prompt =
@@ -39,7 +44,7 @@ pub fn explain_command(model: &str, command: &str) -> Result<String> {
     ChatMessage::user(&explain_prompt),
   ]);
 
-  let chat_res = client.exec_chat(model, chat_req)?;
+  let chat_res = client.exec_chat(model, reasoning_effort, chat_req)?;
 
   let response_text = chat_res
     .first_text()
@@ -50,6 +55,7 @@ pub fn explain_command(model: &str, command: &str) -> Result<String> {
 
 pub fn refine_command(
   model: &str,
+  reasoning_effort: Option<ReasoningEffort>,
   mut messages: Vec<ChatMessage>,
   refinement: &str,
 ) -> Result<(String, Vec<ChatMessage>)> {
@@ -59,7 +65,7 @@ pub fn refine_command(
 
   let chat_req = ChatRequest::new(messages.clone());
 
-  let chat_res = client.exec_chat(model, chat_req)?;
+  let chat_res = client.exec_chat(model, reasoning_effort, chat_req)?;
 
   let response_text = chat_res
     .first_text()

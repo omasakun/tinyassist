@@ -2,12 +2,13 @@ use serde_json::{Value, json};
 
 use crate::genai::adapter::Adapter;
 use crate::genai::chat::{ChatRequest, ChatResponse, ChatRole};
+use crate::genai::reasoning::ReasoningEffort;
 use crate::genai::{Error, Result};
 
 struct AdapterConfig {
   url: fn(&str) -> String,
   headers: fn(&str) -> Vec<(&'static str, String)>,
-  payload: fn(&ChatRequest, &str) -> Result<String>,
+  payload: fn(&ChatRequest, &str, Option<ReasoningEffort>) -> Result<String>,
   extract: fn(&Value) -> Result<String>,
   envvar: &'static str,
 }
@@ -22,7 +23,12 @@ impl Client {
     Self
   }
 
-  pub fn exec_chat(&self, model: &str, chat_req: ChatRequest) -> Result<ChatResponse> {
+  pub fn exec_chat(
+    &self,
+    model: &str,
+    reasoning_effort: Option<ReasoningEffort>,
+    chat_req: ChatRequest,
+  ) -> Result<ChatResponse> {
     let adapter_kind = Adapter::from_model_name(model);
 
     let config = match adapter_kind {
@@ -34,13 +40,14 @@ impl Client {
       Adapter::Others => return Err(Error::InvalidModel(model.to_string())),
     };
 
-    self.call_provider(&config, model, chat_req)
+    self.call_provider(&config, model, reasoning_effort, chat_req)
   }
 
   fn call_provider(
     &self,
     config: &AdapterConfig,
     model: &str,
+    reasoning_effort: Option<ReasoningEffort>,
     chat_req: ChatRequest,
   ) -> Result<ChatResponse> {
     let api_key =
@@ -48,7 +55,7 @@ impl Client {
 
     let url = (config.url)(model);
     let headers = (config.headers)(&api_key);
-    let payload = (config.payload)(&chat_req, model)?;
+    let payload = (config.payload)(&chat_req, model, reasoning_effort)?;
 
     let mut request = minreq::post(&url);
     for (key, value) in headers {
@@ -75,7 +82,7 @@ impl Client {
           ("Content-Type", "application/json".to_string()),
         ]
       },
-      payload: |chat_req, model| {
+      payload: |chat_req, model, reasoning_effort| {
         let messages = chat_req
           .messages
           .iter()
@@ -87,10 +94,14 @@ impl Client {
           })
           .collect::<Vec<_>>();
 
-        let payload = json!({
+        let mut payload = json!({
           "model": model,
           "messages": messages,
         });
+
+        if let Some(reasoning_effort) = reasoning_effort {
+          payload["reasoning_effort"] = json!(reasoning_effort.to_string());
+        }
 
         Ok(payload.to_string())
       },
@@ -114,7 +125,7 @@ impl Client {
           ("Content-Type", "application/json".to_string()),
         ]
       },
-      payload: |chat_req, model| {
+      payload: |chat_req, model, _| {
         let messages = chat_req
           .messages
           .iter()
@@ -161,7 +172,7 @@ impl Client {
         format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model)
       },
       headers: |_| vec![("Content-Type", "application/json".to_string())],
-      payload: |chat_req, _| {
+      payload: |chat_req, _, _| {
         let contents = chat_req
           .messages
           .iter()
@@ -196,7 +207,7 @@ impl Client {
           ("Content-Type", "application/json".to_string()),
         ]
       },
-      payload: |chat_req, model| {
+      payload: |chat_req, model, _| {
         let messages = chat_req
           .messages
           .iter()
@@ -234,7 +245,7 @@ impl Client {
           ("Content-Type", "application/json".to_string()),
         ]
       },
-      payload: |chat_req, model| {
+      payload: |chat_req, model, _| {
         let messages = chat_req
           .messages
           .iter()

@@ -20,6 +20,7 @@
   outputs =
     inputs@{
       flake-parts,
+      fenix,
       nixpkgs,
       systems,
       ...
@@ -28,10 +29,31 @@
       systems = import systems;
       perSystem =
         { pkgs, system, ... }:
+        let
+          rustPlatform = pkgs.makeRustPlatform {
+            inherit (pkgs.fenix.complete) cargo rustc rust-src;
+          };
+        in
         {
           _module.args.pkgs = import nixpkgs {
             inherit system;
             overlays = [ inputs.fenix.overlays.default ];
+          };
+
+          packages.default = rustPlatform.buildRustPackage {
+            pname = (fromTOML (builtins.readFile ./Cargo.toml)).package.name;
+            version = (fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+            ];
+
+            buildInputs = with pkgs; [
+              openssl
+            ];
           };
 
           devShells.default = pkgs.mkShell {
