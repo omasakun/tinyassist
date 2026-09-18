@@ -1,7 +1,7 @@
 <br>
 <div align="center">
   <h1>TinyAssist</h1>
-  <p>Simple, cross-platform LLM assistant for shell.</p>
+  <p>Simple cross-platform LLM assistant for shell.</p>
   <a href="https://asciinema.org/a/1265710" target="_blank"><img src="https://asciinema.org/a/1265710.svg" /></a>
 </div>
 <br>
@@ -78,7 +78,9 @@ Then set the model and reasoning effort:
 | `DEFAULT_MODEL`            | `gpt-5.6-luna` | Provider-specific model names     |
 | `DEFAULT_REASONING_EFFORT` | `off`          | `off` / `low` / `medium` / `high` |
 
-Set via environment variables, or in a config file typically located at `~/.config/tinyassist/.env` (check `tinyassist --info` for the actual path).
+Set via environment variables, or in a config file ([example](.env.example)) typically located at `~/.config/tinyassist/.env`.
+
+Check `tinyassist --info` for the actual config path.
 
 ## Development
 

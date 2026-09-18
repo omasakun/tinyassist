@@ -1,17 +1,11 @@
 .env
 
-node_modules/
 target/
 
 /result
 /result-*
 
-.nx/installation
-.nx/cache
-.nx/workspace-data
-
 .DS_Store
 Thumbs.db
 
-.devenv*
 .direnv
