@@ -1,4 +1,10 @@
-# tinyassist
+<br>
+<div align="center">
+  <h1>TinyAssist</h1>
+  <p>Simple, cross-platform LLM assistant for shell.</p>
+</div>
+<br>
+<br>
 
 Simple and small cross-platform command-line assistant that suggests shell commands from natural language descriptions.
 
@@ -86,3 +92,9 @@ just run    # run the CLI
 ```
 
 Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) on `v*` tags.
+
+## License
+
+This project is licensed under [MIT License](LICENSE).
+
+Copyright 2026 omasakun
